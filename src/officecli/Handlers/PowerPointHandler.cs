@@ -332,6 +332,71 @@ public class PowerPointHandler : IDocumentHandler
             return node;
         }
 
+        // Try paragraph/run paths: /slide[N]/shape[M]/paragraph[P] or .../run[K] or .../paragraph[P]/run[K]
+        var runPathMatch = Regex.Match(path, @"^/slide\[(\d+)\]/shape\[(\d+)\]/run\[(\d+)\]$");
+        if (runPathMatch.Success)
+        {
+            var sIdx = int.Parse(runPathMatch.Groups[1].Value);
+            var shIdx = int.Parse(runPathMatch.Groups[2].Value);
+            var rIdx = int.Parse(runPathMatch.Groups[3].Value);
+            var (_, shape) = ResolveShape(sIdx, shIdx);
+            var allRuns = GetAllRuns(shape);
+            if (rIdx < 1 || rIdx > allRuns.Count)
+                throw new ArgumentException($"Run {rIdx} not found (shape has {allRuns.Count} runs)");
+            return RunToNode(allRuns[rIdx - 1], path);
+        }
+
+        var paraPathMatch = Regex.Match(path, @"^/slide\[(\d+)\]/shape\[(\d+)\]/paragraph\[(\d+)\](?:/run\[(\d+)\])?$");
+        if (paraPathMatch.Success)
+        {
+            var sIdx = int.Parse(paraPathMatch.Groups[1].Value);
+            var shIdx = int.Parse(paraPathMatch.Groups[2].Value);
+            var pIdx = int.Parse(paraPathMatch.Groups[3].Value);
+            var (_, shape) = ResolveShape(sIdx, shIdx);
+            var paragraphs = shape.TextBody?.Elements<Drawing.Paragraph>().ToList()
+                ?? throw new ArgumentException("Shape has no text body");
+            if (pIdx < 1 || pIdx > paragraphs.Count)
+                throw new ArgumentException($"Paragraph {pIdx} not found (shape has {paragraphs.Count} paragraphs)");
+
+            var para = paragraphs[pIdx - 1];
+
+            if (paraPathMatch.Groups[4].Success)
+            {
+                // /slide[N]/shape[M]/paragraph[P]/run[K]
+                var rIdx = int.Parse(paraPathMatch.Groups[4].Value);
+                var paraRuns = para.Elements<Drawing.Run>().ToList();
+                if (rIdx < 1 || rIdx > paraRuns.Count)
+                    throw new ArgumentException($"Run {rIdx} not found (paragraph has {paraRuns.Count} runs)");
+                return RunToNode(paraRuns[rIdx - 1],
+                    $"/slide[{sIdx}]/shape[{shIdx}]/paragraph[{pIdx}]/run[{rIdx}]");
+            }
+
+            // /slide[N]/shape[M]/paragraph[P]
+            var paraText = string.Join("", para.Elements<Drawing.Run>().Select(r => r.Text?.Text ?? ""));
+            var paraNode = new DocumentNode
+            {
+                Path = path,
+                Type = "paragraph",
+                Text = paraText
+            };
+            var align = para.ParagraphProperties?.Alignment;
+            if (align != null && align.HasValue) paraNode.Format["align"] = align.InnerText;
+
+            var runs = para.Elements<Drawing.Run>().ToList();
+            paraNode.ChildCount = runs.Count;
+            if (depth > 0)
+            {
+                int runIdx = 0;
+                foreach (var run in runs)
+                {
+                    paraNode.Children.Add(RunToNode(run,
+                        $"/slide[{sIdx}]/shape[{shIdx}]/paragraph[{pIdx}]/run[{runIdx + 1}]"));
+                    runIdx++;
+                }
+            }
+            return paraNode;
+        }
+
         // Parse /slide[N] or /slide[N]/shape[M]
         var match = Regex.Match(path, @"^/slide\[(\d+)\](?:/(\w+)\[(\d+)\])?$");
         if (!match.Success)
@@ -496,10 +561,113 @@ public class PowerPointHandler : IDocumentHandler
 
     public List<string> Set(string path, Dictionary<string, string> properties)
     {
-        var match = Regex.Match(path, @"^/slide\[(\d+)\]/shape\[(\d+)\]$");
-        if (!match.Success)
+        // Try run-level path: /slide[N]/shape[M]/run[K]
+        var runMatch = Regex.Match(path, @"^/slide\[(\d+)\]/shape\[(\d+)\]/run\[(\d+)\]$");
+        if (runMatch.Success)
         {
-            // Generic XML fallback: navigate to element and set attributes
+            var slideIdx = int.Parse(runMatch.Groups[1].Value);
+            var shapeIdx = int.Parse(runMatch.Groups[2].Value);
+            var runIdx = int.Parse(runMatch.Groups[3].Value);
+
+            var (slidePart, shape) = ResolveShape(slideIdx, shapeIdx);
+            var allRuns = GetAllRuns(shape);
+            if (runIdx < 1 || runIdx > allRuns.Count)
+                throw new ArgumentException($"Run {runIdx} not found (shape has {allRuns.Count} runs)");
+
+            var targetRun = allRuns[runIdx - 1];
+            var unsupported = SetRunOrShapeProperties(properties, new List<Drawing.Run> { targetRun }, shape);
+            GetSlide(slidePart).Save();
+            return unsupported;
+        }
+
+        // Try paragraph/run path: /slide[N]/shape[M]/paragraph[P]/run[K]
+        var paraRunMatch = Regex.Match(path, @"^/slide\[(\d+)\]/shape\[(\d+)\]/paragraph\[(\d+)\]/run\[(\d+)\]$");
+        if (paraRunMatch.Success)
+        {
+            var slideIdx = int.Parse(paraRunMatch.Groups[1].Value);
+            var shapeIdx = int.Parse(paraRunMatch.Groups[2].Value);
+            var paraIdx = int.Parse(paraRunMatch.Groups[3].Value);
+            var runIdx = int.Parse(paraRunMatch.Groups[4].Value);
+
+            var (slidePart, shape) = ResolveShape(slideIdx, shapeIdx);
+            var paragraphs = shape.TextBody?.Elements<Drawing.Paragraph>().ToList()
+                ?? throw new ArgumentException("Shape has no text body");
+            if (paraIdx < 1 || paraIdx > paragraphs.Count)
+                throw new ArgumentException($"Paragraph {paraIdx} not found (shape has {paragraphs.Count} paragraphs)");
+
+            var para = paragraphs[paraIdx - 1];
+            var paraRuns = para.Elements<Drawing.Run>().ToList();
+            if (runIdx < 1 || runIdx > paraRuns.Count)
+                throw new ArgumentException($"Run {runIdx} not found (paragraph has {paraRuns.Count} runs)");
+
+            var targetRun = paraRuns[runIdx - 1];
+            var unsupported = SetRunOrShapeProperties(properties, new List<Drawing.Run> { targetRun }, shape);
+            GetSlide(slidePart).Save();
+            return unsupported;
+        }
+
+        // Try paragraph-level path: /slide[N]/shape[M]/paragraph[P]
+        var paraMatch = Regex.Match(path, @"^/slide\[(\d+)\]/shape\[(\d+)\]/paragraph\[(\d+)\]$");
+        if (paraMatch.Success)
+        {
+            var slideIdx = int.Parse(paraMatch.Groups[1].Value);
+            var shapeIdx = int.Parse(paraMatch.Groups[2].Value);
+            var paraIdx = int.Parse(paraMatch.Groups[3].Value);
+
+            var (slidePart, shape) = ResolveShape(slideIdx, shapeIdx);
+            var paragraphs = shape.TextBody?.Elements<Drawing.Paragraph>().ToList()
+                ?? throw new ArgumentException("Shape has no text body");
+            if (paraIdx < 1 || paraIdx > paragraphs.Count)
+                throw new ArgumentException($"Paragraph {paraIdx} not found (shape has {paragraphs.Count} paragraphs)");
+
+            var para = paragraphs[paraIdx - 1];
+            var paraRuns = para.Elements<Drawing.Run>().ToList();
+            var unsupported = new List<string>();
+
+            foreach (var (key, value) in properties)
+            {
+                switch (key.ToLowerInvariant())
+                {
+                    case "align":
+                        var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
+                        pProps.Alignment = value.ToLowerInvariant() switch
+                        {
+                            "left" or "l" => Drawing.TextAlignmentTypeValues.Left,
+                            "center" or "c" => Drawing.TextAlignmentTypeValues.Center,
+                            "right" or "r" => Drawing.TextAlignmentTypeValues.Right,
+                            "justify" or "j" => Drawing.TextAlignmentTypeValues.Justified,
+                            _ => throw new ArgumentException($"Unknown alignment: {value}. Use: left, center, right, justify")
+                        };
+                        break;
+                    default:
+                        // Apply run-level properties to all runs in this paragraph
+                        var runUnsup = SetRunOrShapeProperties(
+                            new Dictionary<string, string> { { key, value } }, paraRuns, shape);
+                        unsupported.AddRange(runUnsup);
+                        break;
+                }
+            }
+
+            GetSlide(slidePart).Save();
+            return unsupported;
+        }
+
+        // Try shape-level path: /slide[N]/shape[M]
+        var match = Regex.Match(path, @"^/slide\[(\d+)\]/shape\[(\d+)\]$");
+        if (match.Success)
+        {
+            var slideIdx = int.Parse(match.Groups[1].Value);
+            var shapeIdx = int.Parse(match.Groups[2].Value);
+
+            var (slidePart, shape) = ResolveShape(slideIdx, shapeIdx);
+            var allRuns = shape.Descendants<Drawing.Run>().ToList();
+            var unsupported = SetRunOrShapeProperties(properties, allRuns, shape);
+            GetSlide(slidePart).Save();
+            return unsupported;
+        }
+
+        // Generic XML fallback: navigate to element and set attributes
+        {
             var allSegments = GenericXmlQuery.ParsePathSegments(path);
             if (allSegments.Count == 0 || !allSegments[0].Name.Equals("slide", StringComparison.OrdinalIgnoreCase) || !allSegments[0].Index.HasValue)
                 throw new ArgumentException($"Path must start with /slide[N]: {path}");
@@ -527,24 +695,35 @@ public class PowerPointHandler : IDocumentHandler
             GetSlide(fbSlidePart).Save();
             return unsup;
         }
+    }
 
-        var slideIdx = int.Parse(match.Groups[1].Value);
-        var shapeIdx = int.Parse(match.Groups[2].Value);
-
+    private (SlidePart slidePart, Shape shape) ResolveShape(int slideIdx, int shapeIdx)
+    {
         var slideParts = GetSlideParts().ToList();
         if (slideIdx < 1 || slideIdx > slideParts.Count)
             throw new ArgumentException($"Slide {slideIdx} not found");
 
         var slidePart = slideParts[slideIdx - 1];
-        var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree;
-        if (shapeTree == null)
-            throw new ArgumentException($"Slide {slideIdx} has no shapes");
+        var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
+            ?? throw new ArgumentException($"Slide {slideIdx} has no shapes");
 
         var shapes = shapeTree.Elements<Shape>().ToList();
         if (shapeIdx < 1 || shapeIdx > shapes.Count)
             throw new ArgumentException($"Shape {shapeIdx} not found");
 
-        var shape = shapes[shapeIdx - 1];
+        return (slidePart, shapes[shapeIdx - 1]);
+    }
+
+    private static List<Drawing.Run> GetAllRuns(Shape shape)
+    {
+        return shape.TextBody?.Elements<Drawing.Paragraph>()
+            .SelectMany(p => p.Elements<Drawing.Run>()).ToList()
+            ?? new List<Drawing.Run>();
+    }
+
+    private static List<string> SetRunOrShapeProperties(
+        Dictionary<string, string> properties, List<Drawing.Run> runs, Shape shape)
+    {
         var unsupported = new List<string>();
 
         foreach (var (key, value) in properties)
@@ -552,45 +731,48 @@ public class PowerPointHandler : IDocumentHandler
             switch (key.ToLowerInvariant())
             {
                 case "text":
-                    // Replace all text in the shape
-                    var textBody = shape.TextBody;
-                    if (textBody != null)
+                    if (runs.Count == 1)
                     {
-                        // Preserve formatting of first run, replace text
-                        var firstRun = textBody.Descendants<Drawing.Run>().FirstOrDefault();
-                        var runProps = firstRun?.RunProperties?.CloneNode(true) as Drawing.RunProperties;
+                        // Single run: just replace its text
+                        runs[0].Text = new Drawing.Text(value);
+                    }
+                    else
+                    {
+                        // Shape-level: replace all text, preserve first run formatting
+                        var textBody = shape.TextBody;
+                        if (textBody != null)
+                        {
+                            var firstRun = textBody.Descendants<Drawing.Run>().FirstOrDefault();
+                            var runProps = firstRun?.RunProperties?.CloneNode(true) as Drawing.RunProperties;
 
-                        // Remove all paragraphs
-                        textBody.RemoveAllChildren<Drawing.Paragraph>();
+                            textBody.RemoveAllChildren<Drawing.Paragraph>();
 
-                        // Add new paragraph with text
-                        var newPara = new Drawing.Paragraph();
-                        var newRun = new Drawing.Run();
-                        if (runProps != null)
-                            newRun.RunProperties = runProps;
-                        newRun.Text = new Drawing.Text(value);
-                        newPara.Append(newRun);
-                        textBody.Append(newPara);
+                            var newPara = new Drawing.Paragraph();
+                            var newRun = new Drawing.Run();
+                            if (runProps != null)
+                                newRun.RunProperties = runProps;
+                            newRun.Text = new Drawing.Text(value);
+                            newPara.Append(newRun);
+                            textBody.Append(newPara);
+                        }
                     }
                     break;
 
                 case "font":
-                    foreach (var run in shape.Descendants<Drawing.Run>())
+                    foreach (var run in runs)
                     {
                         var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
-                        // Remove existing font elements
                         rProps.RemoveAllChildren<Drawing.LatinFont>();
                         rProps.RemoveAllChildren<Drawing.EastAsianFont>();
                         rProps.RemoveAllChildren<Drawing.ComplexScriptFont>();
-                        // Add new font
                         rProps.Append(new Drawing.LatinFont { Typeface = value });
                         rProps.Append(new Drawing.EastAsianFont { Typeface = value });
                     }
                     break;
 
                 case "size":
-                    var sizeVal = int.Parse(value) * 100; // pt to hundredths of a point
-                    foreach (var run in shape.Descendants<Drawing.Run>())
+                    var sizeVal = int.Parse(value) * 100;
+                    foreach (var run in runs)
                     {
                         var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
                         rProps.FontSize = sizeVal;
@@ -599,7 +781,7 @@ public class PowerPointHandler : IDocumentHandler
 
                 case "bold":
                     var isBold = bool.Parse(value);
-                    foreach (var run in shape.Descendants<Drawing.Run>())
+                    foreach (var run in runs)
                     {
                         var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
                         rProps.Bold = isBold;
@@ -608,7 +790,7 @@ public class PowerPointHandler : IDocumentHandler
 
                 case "italic":
                     var isItalic = bool.Parse(value);
-                    foreach (var run in shape.Descendants<Drawing.Run>())
+                    foreach (var run in runs)
                     {
                         var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
                         rProps.Italic = isItalic;
@@ -616,13 +798,12 @@ public class PowerPointHandler : IDocumentHandler
                     break;
 
                 case "color":
-                    foreach (var run in shape.Descendants<Drawing.Run>())
+                    foreach (var run in runs)
                     {
                         var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
                         rProps.RemoveAllChildren<Drawing.SolidFill>();
                         var solidFill = new Drawing.SolidFill();
-                        solidFill.Append(new Drawing.RgbColorModelHex { Val = value });
-                        // Use schema-aware insertion for correct element ordering
+                        solidFill.Append(new Drawing.RgbColorModelHex { Val = value.ToUpperInvariant() });
                         if (rProps is OpenXmlCompositeElement composite)
                         {
                             if (!composite.AddChild(solidFill, throwOnError: false))
@@ -635,6 +816,24 @@ public class PowerPointHandler : IDocumentHandler
                     }
                     break;
 
+                case "x" or "y" or "width" or "height":
+                {
+                    var spPr = shape.ShapeProperties;
+                    if (spPr == null) { unsupported.Add(key); break; }
+                    var xfrm = spPr.Transform2D ?? (spPr.Transform2D = new Drawing.Transform2D());
+                    var offset = xfrm.Offset ?? (xfrm.Offset = new Drawing.Offset());
+                    var extents = xfrm.Extents ?? (xfrm.Extents = new Drawing.Extents());
+                    var emu = ParseEmu(value);
+                    switch (key.ToLowerInvariant())
+                    {
+                        case "x": offset.X = emu; break;
+                        case "y": offset.Y = emu; break;
+                        case "width": extents.Cx = emu; break;
+                        case "height": extents.Cy = emu; break;
+                    }
+                    break;
+                }
+
                 default:
                     if (!GenericXmlQuery.SetGenericAttribute(shape, key, value))
                         unsupported.Add(key);
@@ -642,7 +841,6 @@ public class PowerPointHandler : IDocumentHandler
             }
         }
 
-        GetSlide(slidePart).Save();
         return unsupported;
     }
 
@@ -784,7 +982,7 @@ public class PowerPointHandler : IDocumentHandler
                         var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
                         rProps.RemoveAllChildren<Drawing.SolidFill>();
                         var solidFill = new Drawing.SolidFill();
-                        solidFill.Append(new Drawing.RgbColorModelHex { Val = colorVal });
+                        solidFill.Append(new Drawing.RgbColorModelHex { Val = colorVal.ToUpperInvariant() });
                         if (rProps is OpenXmlCompositeElement composite)
                         {
                             if (!composite.AddChild(solidFill, throwOnError: false))
@@ -1705,6 +1903,22 @@ public class PowerPointHandler : IDocumentHandler
         node.Format["name"] = name;
         if (isTitle) node.Format["isTitle"] = true;
 
+        // Position and size
+        var xfrm = shape.ShapeProperties?.Transform2D;
+        if (xfrm != null)
+        {
+            if (xfrm.Offset != null)
+            {
+                if (xfrm.Offset.X is not null) node.Format["x"] = FormatEmu(xfrm.Offset.X!);
+                if (xfrm.Offset.Y is not null) node.Format["y"] = FormatEmu(xfrm.Offset.Y!);
+            }
+            if (xfrm.Extents != null)
+            {
+                if (xfrm.Extents.Cx is not null) node.Format["width"] = FormatEmu(xfrm.Extents.Cx!);
+                if (xfrm.Extents.Cy is not null) node.Format["height"] = FormatEmu(xfrm.Extents.Cy!);
+            }
+        }
+
         // Collect font info
         var firstRun = shape.TextBody?.Descendants<Drawing.Run>().FirstOrDefault();
         if (firstRun?.RunProperties != null)
@@ -1720,40 +1934,77 @@ public class PowerPointHandler : IDocumentHandler
             if (firstRun.RunProperties.Italic?.Value == true) node.Format["italic"] = true;
         }
 
-        // Count runs regardless of depth
+        // Count paragraphs regardless of depth
         if (shape.TextBody != null)
         {
-            var allRuns = shape.TextBody.Elements<Drawing.Paragraph>()
-                .SelectMany(p => p.Elements<Drawing.Run>()).ToList();
-            node.ChildCount = allRuns.Count;
+            var paragraphs = shape.TextBody.Elements<Drawing.Paragraph>().ToList();
+            node.ChildCount = paragraphs.Count;
 
-            // Include individual runs at depth > 0
+            // Include paragraph and run hierarchy at depth > 0
             if (depth > 0)
             {
-                int runIdx = 0;
-                foreach (var run in allRuns)
+                int paraIdx = 0;
+                foreach (var para in paragraphs)
                 {
-                    var runNode = new DocumentNode
+                    var paraText = string.Join("", para.Elements<Drawing.Run>()
+                        .Select(r => r.Text?.Text ?? ""));
+                    var paraRuns = para.Elements<Drawing.Run>().ToList();
+
+                    var paraNode = new DocumentNode
                     {
-                        Path = $"/slide[{slideNum}]/shape[{shapeIdx}]/run[{runIdx}]",
-                        Type = "run",
-                        Text = run.Text?.Text ?? ""
+                        Path = $"/slide[{slideNum}]/shape[{shapeIdx}]/paragraph[{paraIdx + 1}]",
+                        Type = "paragraph",
+                        Text = paraText,
+                        ChildCount = paraRuns.Count
                     };
 
-                    if (run.RunProperties != null)
+                    // Add alignment info
+                    var align = para.ParagraphProperties?.Alignment;
+                    if (align != null && align.HasValue) paraNode.Format["align"] = align.InnerText;
+
+                    // Include runs at depth > 1
+                    if (depth > 1)
                     {
-                        var f = run.RunProperties.GetFirstChild<Drawing.LatinFont>()?.Typeface
-                            ?? run.RunProperties.GetFirstChild<Drawing.EastAsianFont>()?.Typeface;
-                        if (f != null) runNode.Format["font"] = f;
-                        var fs = run.RunProperties.FontSize?.Value;
-                        if (fs.HasValue) runNode.Format["size"] = $"{fs.Value / 100}pt";
-                        if (run.RunProperties.Bold?.Value == true) runNode.Format["bold"] = true;
+                        int runIdx = 0;
+                        foreach (var run in paraRuns)
+                        {
+                            paraNode.Children.Add(RunToNode(run,
+                                $"/slide[{slideNum}]/shape[{shapeIdx}]/paragraph[{paraIdx + 1}]/run[{runIdx + 1}]"));
+                            runIdx++;
+                        }
                     }
 
-                    node.Children.Add(runNode);
-                    runIdx++;
+                    node.Children.Add(paraNode);
+                    paraIdx++;
                 }
             }
+        }
+
+        return node;
+    }
+
+    private static DocumentNode RunToNode(Drawing.Run run, string path)
+    {
+        var node = new DocumentNode
+        {
+            Path = path,
+            Type = "run",
+            Text = run.Text?.Text ?? ""
+        };
+
+        if (run.RunProperties != null)
+        {
+            var f = run.RunProperties.GetFirstChild<Drawing.LatinFont>()?.Typeface
+                ?? run.RunProperties.GetFirstChild<Drawing.EastAsianFont>()?.Typeface;
+            if (f != null) node.Format["font"] = f;
+            var fs = run.RunProperties.FontSize?.Value;
+            if (fs.HasValue) node.Format["size"] = $"{fs.Value / 100}pt";
+            if (run.RunProperties.Bold?.Value == true) node.Format["bold"] = true;
+            if (run.RunProperties.Italic?.Value == true) node.Format["italic"] = true;
+            // Color
+            var solidFill = run.RunProperties.GetFirstChild<Drawing.SolidFill>();
+            var rgbHex = solidFill?.GetFirstChild<Drawing.RgbColorModelHex>()?.Val?.Value;
+            if (rgbHex != null) node.Format["color"] = rgbHex;
         }
 
         return node;
@@ -1917,5 +2168,11 @@ public class PowerPointHandler : IDocumentHandler
         if (value.EndsWith("px", StringComparison.OrdinalIgnoreCase))
             return (long)(double.Parse(value[..^2]) * 9525);
         return long.Parse(value); // raw EMU
+    }
+
+    private static string FormatEmu(long emu)
+    {
+        var cm = emu / 360000.0;
+        return $"{cm:0.##}cm";
     }
 }

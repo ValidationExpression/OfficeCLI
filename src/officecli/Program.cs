@@ -7,7 +7,12 @@ using OfficeCli.Core;
 
 var jsonOption = new Option<bool>("--json") { Description = "Output as JSON (AI-friendly)" };
 
-var rootCommand = new RootCommand("officecli: AI-friendly Office document CLI tool");
+var rootCommand = new RootCommand("""
+    officecli: AI-friendly CLI for Office documents (.docx, .xlsx, .pptx)
+
+    Use 'officecli docx/xlsx/pptx [view|get|query|set|add|raw] --help' for format-specific property reference and examples.
+    E.g. 'officecli pptx set --help' shows all shape properties with usage examples.
+    """);
 rootCommand.Add(jsonOption);
 
 // ==================== open command (start resident) ====================
@@ -603,11 +608,18 @@ createCommand.SetAction(result =>
 
 rootCommand.Add(createCommand);
 
+OfficeCli.HelpCommands.Register(rootCommand);
+
 if (args.Length == 0)
 {
     rootCommand.Parse("--help").Invoke();
     return 0;
 }
+
+// Handle help commands (docx/xlsx/pptx) before System.CommandLine parsing
+// so that --help also shows our custom output instead of the default help
+if (OfficeCli.HelpCommands.TryHandle(args))
+    return 0;
 
 var parseResult = rootCommand.Parse(args);
 return parseResult.Invoke();

@@ -720,7 +720,7 @@ public class WordHandler : IDocumentHandler
                         };
                         break;
                     case "color":
-                        EnsureRunProperties(run).Color = new Color { Val = value };
+                        EnsureRunProperties(run).Color = new Color { Val = value.ToUpperInvariant() };
                         break;
                     case "underline":
                         EnsureRunProperties(run).Underline = new Underline
@@ -906,7 +906,7 @@ public class WordHandler : IDocumentHandler
                                         rPr.Italic = bool.Parse(value) ? new Italic() : null;
                                         break;
                                     case "color":
-                                        rPr.Color = new Color { Val = value };
+                                        rPr.Color = new Color { Val = value.ToUpperInvariant() };
                                         break;
                                 }
                             }
@@ -1169,7 +1169,7 @@ public class WordHandler : IDocumentHandler
                     if (properties.TryGetValue("italic", out var pItalic) && bool.Parse(pItalic))
                         rProps.Italic = new Italic();
                     if (properties.TryGetValue("color", out var pColor))
-                        rProps.Color = new Color { Val = pColor };
+                        rProps.Color = new Color { Val = pColor.ToUpperInvariant() };
                     if (properties.TryGetValue("underline", out var pUnderline))
                         rProps.Underline = new Underline { Val = new UnderlineValues(pUnderline) };
                     if (properties.TryGetValue("strike", out var pStrike) && bool.Parse(pStrike))
@@ -1293,7 +1293,7 @@ public class WordHandler : IDocumentHandler
                 if (properties.TryGetValue("italic", out var rItalic) && bool.Parse(rItalic))
                     newRProps.Italic = new Italic();
                 if (properties.TryGetValue("color", out var rColor))
-                    newRProps.Color = new Color { Val = rColor };
+                    newRProps.Color = new Color { Val = rColor.ToUpperInvariant() };
                 if (properties.TryGetValue("underline", out var rUnderline))
                     newRProps.Underline = new Underline { Val = new UnderlineValues(rUnderline) };
                 if (properties.TryGetValue("strike", out var rStrike) && bool.Parse(rStrike))

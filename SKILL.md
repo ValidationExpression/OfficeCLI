@@ -28,9 +28,10 @@ irm https://raw.githubusercontent.com/iOfficeAI/OfficeCli/main/install.ps1 | iex
 
 ---
 
-## L1: Read & Inspect
+## L1: Create, Read & Inspect
 
 ```bash
+officecli create <file>          # create blank .docx/.xlsx/.pptx (type inferred from extension)
 officecli view <file> outline|stats|issues|text|annotated [--start N --end N] [--max-lines N] [--cols A,B]
 officecli get <file> '/body/p[3]' --depth 2 [--json]
 officecli query <file> 'paragraph[style=Normal] > run[font!=宋体]'
