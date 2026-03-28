@@ -356,7 +356,12 @@ public partial class WordHandler
         {
             var widthPx = extCx / 9525;
             var heightPx = extCy / 9525;
-            style = $"display:inline-block;width:{widthPx}px;min-height:{heightPx}px;vertical-align:top";
+            // Check if shape has auto-fit (spAutoFit) — don't force min-height
+            var bodyPrCheck = shape.Elements().FirstOrDefault(e => e.LocalName == "bodyPr");
+            var hasAutoFit = bodyPrCheck?.Elements().Any(e => e.LocalName == "spAutoFit") ?? false;
+            style = hasAutoFit
+                ? $"display:inline-block;width:{widthPx}px;vertical-align:top"
+                : $"display:inline-block;width:{widthPx}px;min-height:{heightPx}px;vertical-align:top";
         }
         else
         {
