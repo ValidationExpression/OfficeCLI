@@ -38,19 +38,21 @@ public partial class ExcelHandler
         sb.AppendLine($"<div class=\"file-title\">{HtmlEncode(Path.GetFileName(_filePath))}</div>");
 
         // Sheet content areas (tabs moved to bottom)
+        sb.AppendLine("<div class=\"sheet-slider\">");
         for (int sheetIdx = 0; sheetIdx < sheets.Count; sheetIdx++)
         {
             var (sheetName, worksheetPart) = sheets[sheetIdx];
-            var displayStyle = sheetIdx == 0 ? "" : " style=\"display:none\"";
+            var activeClass = sheetIdx == 0 ? " active" : "";
             // Check if sheet is RTL
             var sheetView = GetSheet(worksheetPart).GetFirstChild<SheetViews>()?.GetFirstChild<SheetView>();
             var isRtl = sheetView?.RightToLeft?.Value == true;
             var dirAttr = isRtl ? " dir=\"rtl\"" : "";
-            sb.AppendLine($"<div class=\"sheet-content\" data-sheet=\"{sheetIdx}\"{displayStyle}{dirAttr}>");
+            sb.AppendLine($"<div class=\"sheet-content{activeClass}\" data-sheet=\"{sheetIdx}\"{dirAttr}>");
             RenderSheetTable(sb, sheetName, worksheetPart, stylesheet);
             RenderSheetCharts(sb, worksheetPart);
             sb.AppendLine("</div>");
         }
+        sb.AppendLine("</div>");
 
         // Sheet tabs at bottom (like real Excel)
         sb.AppendLine("<div class=\"sheet-tabs\" role=\"tablist\">");
@@ -85,6 +87,16 @@ public partial class ExcelHandler
     /// Get the number of sheets (for watch notifications).
     /// </summary>
     public int GetSheetCount() => GetWorksheets().Count;
+
+    /// <summary>Get the 0-based index of a sheet by name, or -1 if not found.</summary>
+    public int GetSheetIndex(string sheetName)
+    {
+        var sheets = GetWorksheets();
+        for (int i = 0; i < sheets.Count; i++)
+            if (string.Equals(sheets[i].Name, sheetName, System.StringComparison.OrdinalIgnoreCase))
+                return i;
+        return -1;
+    }
 
     // ==================== Sheet Rendering ====================
 
@@ -991,6 +1003,18 @@ public partial class ExcelHandler
             border-radius: 0 0 4px 4px;
             white-space: nowrap;
             user-select: none;
+            position: relative;
+            transition: background 0.2s, color 0.2s;
+        }
+        .sheet-tab::after {
+            content: '';
+            position: absolute;
+            bottom: -4px; left: 4px; right: 4px;
+            height: 3px;
+            background: #217346;
+            border-radius: 2px;
+            transform: scaleX(0);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .sheet-tab:hover { background: #f5f5f5; }
         .sheet-tab.active {
@@ -998,7 +1022,12 @@ public partial class ExcelHandler
             border-color: #ccc;
             font-weight: 600;
         }
-        .sheet-content { background: #fff; flex: 1; }
+        .sheet-tab.active::after {
+            transform: scaleX(1);
+        }
+        .sheet-slider { flex: 1; position: relative; overflow: hidden; }
+        .sheet-content { background: #fff; display: none; }
+        .sheet-content.active { display: block; }
         .table-wrapper {
             overflow: auto;
             max-height: calc(100vh - 90px);
@@ -1093,7 +1122,7 @@ public partial class ExcelHandler
                 t.classList.toggle('active', parseInt(t.getAttribute('data-sheet')) === idx);
             });
             document.querySelectorAll('.sheet-content').forEach(function(c) {
-                c.style.display = parseInt(c.getAttribute('data-sheet')) === idx ? '' : 'none';
+                c.classList.toggle('active', parseInt(c.getAttribute('data-sheet')) === idx);
             });
             window.scrollTo(0, 0);
         }

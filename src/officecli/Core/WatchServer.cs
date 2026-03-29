@@ -38,6 +38,14 @@ public class WatchServer : IDisposable
         <script>
         (function() {
             var es = new EventSource('/events');
+            var _scrollTimer = null;
+            function scrollToSlide(num) {
+                clearTimeout(_scrollTimer);
+                _scrollTimer = setTimeout(function() {
+                    var target = document.querySelector('.slide-container[data-slide="' + num + '"]');
+                    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+            }
             function syncThumbs() {
                 var sidebar = document.querySelector('.sidebar');
                 if (!sidebar) return;
@@ -74,7 +82,53 @@ public class WatchServer : IDisposable
             es.addEventListener('update', function(e) {
                 var msg = JSON.parse(e.data);
                 if (msg.action === 'full') {
-                    location.reload();
+                    fetch('/').then(function(r) { return r.text(); }).then(function(html) {
+                        // Extract new body content and replace in-place (no reload flash)
+                        var doc = new DOMParser().parseFromString(html, 'text/html');
+                        // Replace styles
+                        var oldStyles = document.querySelectorAll('head style');
+                        var newStyles = doc.querySelectorAll('head style');
+                        oldStyles.forEach(function(s) { s.remove(); });
+                        newStyles.forEach(function(s) { document.head.appendChild(s.cloneNode(true)); });
+                        // Replace body content (preserve our SSE script)
+                        var scripts = document.body.querySelectorAll('script');
+                        var sseScript = null;
+                        scripts.forEach(function(s) { if (s.textContent.indexOf('EventSource') >= 0) sseScript = s; });
+                        // Pre-apply sheet visibility in parsed DOM before inserting
+                        var targetSheetIdx = -1;
+                        if (msg.scrollTo && msg.scrollTo.indexOf('data-sheet') >= 0) {
+                            var m = msg.scrollTo.match(/data-sheet="(\d+)"/);
+                            if (m) targetSheetIdx = parseInt(m[1]);
+                        }
+                        if (targetSheetIdx >= 0) {
+                            doc.querySelectorAll('.sheet-content').forEach(function(s) {
+                                var idx = parseInt(s.getAttribute('data-sheet'));
+                                if (idx === targetSheetIdx) s.classList.add('active');
+                                else s.classList.remove('active');
+                            });
+                            doc.querySelectorAll('.sheet-tab').forEach(function(t) {
+                                var idx = parseInt(t.getAttribute('data-sheet'));
+                                if (idx === targetSheetIdx) t.classList.add('active');
+                                else t.classList.remove('active');
+                            });
+                        }
+                        document.body.innerHTML = doc.body.innerHTML;
+                        if (sseScript) document.body.appendChild(sseScript);
+                        // Re-run inline scripts from new content (switchSheet etc.)
+                        doc.body.querySelectorAll('script').forEach(function(s) {
+                            if (s.textContent.indexOf('EventSource') >= 0) return;
+                            var ns = document.createElement('script');
+                            ns.textContent = s.textContent;
+                            document.body.appendChild(ns);
+                        });
+                        // Apply scroll target (non-sheet)
+                        if (msg.scrollTo && targetSheetIdx < 0) {
+                            setTimeout(function() {
+                                var el = document.querySelector(msg.scrollTo);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }, 100);
+                        }
+                    });
                     return;
                 }
                 var slideNum = msg.slide;
@@ -87,6 +141,7 @@ public class WatchServer : IDisposable
                         el.parentNode.replaceChild(newEl, el);
                         if (typeof scaleSlides === 'function') scaleSlides();
                         syncThumbs();
+                        scrollToSlide(slideNum);
                     } else {
                         location.reload();
                     }
@@ -108,6 +163,7 @@ public class WatchServer : IDisposable
                         if (typeof scaleSlides === 'function') scaleSlides();
                     }
                     syncThumbs();
+                    scrollToSlide(slideNum);
                 }
             });
         })();
@@ -304,7 +360,7 @@ public class WatchServer : IDisposable
             }
 
             // Forward to SSE clients
-            SendSseEvent(msg.Action, msg.Slide, msg.Html);
+            SendSseEvent(msg.Action, msg.Slide, msg.Html, msg.ScrollTo);
         }
         catch
         {
@@ -378,7 +434,7 @@ public class WatchServer : IDisposable
         return (-1, -1);
     }
 
-    private void SendSseEvent(string action, int slideNum, string? html)
+    private void SendSseEvent(string action, int slideNum, string? html, string? scrollTo = null)
     {
         // Build JSON manually to avoid dependency
         var sb = new StringBuilder();
@@ -386,26 +442,13 @@ public class WatchServer : IDisposable
         sb.Append(",\"slide\":").Append(slideNum);
         if (html != null)
         {
-            sb.Append(",\"html\":\"");
-            // Escape JSON string
-            foreach (var ch in html)
-            {
-                switch (ch)
-                {
-                    case '"': sb.Append("\\\""); break;
-                    case '\\': sb.Append("\\\\"); break;
-                    case '\n': sb.Append("\\n"); break;
-                    case '\r': sb.Append("\\r"); break;
-                    case '\t': sb.Append("\\t"); break;
-                    default:
-                        if (ch < 0x20)
-                            sb.Append($"\\u{(int)ch:X4}");
-                        else
-                            sb.Append(ch);
-                        break;
-                }
-            }
-            sb.Append('"');
+            sb.Append(",\"html\":");
+            AppendJsonString(sb, html);
+        }
+        if (scrollTo != null)
+        {
+            sb.Append(",\"scrollTo\":");
+            AppendJsonString(sb, scrollTo);
         }
         sb.Append('}');
 
@@ -429,6 +472,29 @@ public class WatchServer : IDisposable
             }
             foreach (var d in dead) _sseClients.Remove(d);
         }
+    }
+
+    private static void AppendJsonString(StringBuilder sb, string value)
+    {
+        sb.Append('"');
+        foreach (var ch in value)
+        {
+            switch (ch)
+            {
+                case '"': sb.Append("\\\""); break;
+                case '\\': sb.Append("\\\\"); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                default:
+                    if (ch < 0x20)
+                        sb.Append($"\\u{(int)ch:X4}");
+                    else
+                        sb.Append(ch);
+                    break;
+            }
+        }
+        sb.Append('"');
     }
 
     private async Task HandleClientAsync(TcpClient client, CancellationToken token)

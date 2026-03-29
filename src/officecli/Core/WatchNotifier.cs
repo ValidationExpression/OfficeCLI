@@ -111,6 +111,9 @@ public class WatchMessage
     /// <summary>Full HTML of the entire presentation (for caching by watch server)</summary>
     public string? FullHtml { get; set; }
 
+    /// <summary>CSS selector for the element to scroll to after full refresh (Word/Excel)</summary>
+    public string? ScrollTo { get; set; }
+
     public static int ExtractSlideNum(string? path)
     {
         if (string.IsNullOrEmpty(path)) return 0;
@@ -118,6 +121,26 @@ public class WatchMessage
         if (match.Success && int.TryParse(match.Groups[1].Value, out var num))
             return num;
         return 0;
+    }
+
+    /// <summary>Extract a CSS selector scroll target from a Word document path like /p[5] or /table[2].</summary>
+    public static string? ExtractWordScrollTarget(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(path, @"/(p|paragraph|table)\[(\d+)\]");
+        if (!match.Success) return null;
+        var type = match.Groups[1].Value;
+        if (type == "paragraph") type = "p";
+        return $"#w-{type}-{match.Groups[2].Value}";
+    }
+
+    /// <summary>Extract sheet name from an Excel document path like /Sheet1/A1 or Sheet1!A1.</summary>
+    public static string? ExtractSheetName(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        // Match /SheetName/... or SheetName!...
+        var match = System.Text.RegularExpressions.Regex.Match(path, @"^/?([^/!]+)[/!]");
+        return match.Success ? match.Groups[1].Value : null;
     }
 }
 

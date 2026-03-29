@@ -347,6 +347,24 @@ public class ResidentServer : IDisposable
 
     private void NotifyWatchSlideChanged(string? changedPath)
     {
+        if (_handler is OfficeCli.Handlers.ExcelHandler excel)
+        {
+            string? scrollTo = null;
+            var sheetName = WatchMessage.ExtractSheetName(changedPath);
+            if (sheetName != null)
+            {
+                var idx = excel.GetSheetIndex(sheetName);
+                if (idx >= 0) scrollTo = $".sheet-content[data-sheet=\"{idx}\"]";
+            }
+            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = excel.ViewAsHtml(), ScrollTo = scrollTo });
+            return;
+        }
+        if (_handler is OfficeCli.Handlers.WordHandler word)
+        {
+            var scrollTo = WatchMessage.ExtractWordScrollTarget(changedPath);
+            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = word.ViewAsHtml(), ScrollTo = scrollTo });
+            return;
+        }
         if (_handler is not OfficeCli.Handlers.PowerPointHandler ppt) return;
         var slideNum = WatchMessage.ExtractSlideNum(changedPath);
         if (slideNum > 0)
@@ -363,6 +381,19 @@ public class ResidentServer : IDisposable
 
     private void NotifyWatchRootChanged(int oldSlideCount)
     {
+        if (_handler is OfficeCli.Handlers.WordHandler word)
+        {
+            var html = word.ViewAsHtml();
+            var pageCount = System.Text.RegularExpressions.Regex.Matches(html, @"data-page=""\d+""").Count;
+            var scrollTo = pageCount > 0 ? $".page[data-page=\"{pageCount}\"]" : null;
+            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = html, ScrollTo = scrollTo });
+            return;
+        }
+        if (_handler is OfficeCli.Handlers.ExcelHandler excel)
+        {
+            WatchNotifier.NotifyIfWatching(_filePath, new WatchMessage { Action = "full", FullHtml = excel.ViewAsHtml() });
+            return;
+        }
         if (_handler is not OfficeCli.Handlers.PowerPointHandler ppt) return;
         var newCount = ppt.GetSlideCount();
         if (newCount > oldSlideCount)

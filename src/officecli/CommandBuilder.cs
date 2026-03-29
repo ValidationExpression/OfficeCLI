@@ -1684,12 +1684,20 @@ static class CommandBuilder
     {
         if (handler is OfficeCli.Handlers.ExcelHandler excel)
         {
-            WatchNotifier.NotifyIfWatching(filePath, new WatchMessage { Action = "full", FullHtml = excel.ViewAsHtml() });
+            string? scrollTo = null;
+            var sheetName = WatchMessage.ExtractSheetName(changedPath);
+            if (sheetName != null)
+            {
+                var idx = excel.GetSheetIndex(sheetName);
+                if (idx >= 0) scrollTo = $".sheet-content[data-sheet=\"{idx}\"]";
+            }
+            WatchNotifier.NotifyIfWatching(filePath, new WatchMessage { Action = "full", FullHtml = excel.ViewAsHtml(), ScrollTo = scrollTo });
             return;
         }
         if (handler is OfficeCli.Handlers.WordHandler word)
         {
-            WatchNotifier.NotifyIfWatching(filePath, new WatchMessage { Action = "full", FullHtml = word.ViewAsHtml() });
+            var scrollTo = WatchMessage.ExtractWordScrollTarget(changedPath);
+            WatchNotifier.NotifyIfWatching(filePath, new WatchMessage { Action = "full", FullHtml = word.ViewAsHtml(), ScrollTo = scrollTo });
             return;
         }
         if (handler is not OfficeCli.Handlers.PowerPointHandler ppt) return;
@@ -1715,7 +1723,11 @@ static class CommandBuilder
         }
         if (handler is OfficeCli.Handlers.WordHandler word)
         {
-            WatchNotifier.NotifyIfWatching(filePath, new WatchMessage { Action = "full", FullHtml = word.ViewAsHtml() });
+            // Scroll to last page (new content is typically appended)
+            var html = word.ViewAsHtml();
+            var pageCount = System.Text.RegularExpressions.Regex.Matches(html, @"data-page=""\d+""").Count;
+            var scrollTo = pageCount > 0 ? $".page[data-page=\"{pageCount}\"]" : null;
+            WatchNotifier.NotifyIfWatching(filePath, new WatchMessage { Action = "full", FullHtml = html, ScrollTo = scrollTo });
             return;
         }
         if (handler is not OfficeCli.Handlers.PowerPointHandler ppt) return;
