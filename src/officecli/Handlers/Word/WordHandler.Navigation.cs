@@ -412,9 +412,9 @@ public partial class WordHandler
                     if (numProps.NumberingId?.Val?.Value != null)
                     {
                         var numIdVal = numProps.NumberingId.Val.Value;
-                        node.Format["numid"] = numIdVal;
+                        node.Format["numId"] = numIdVal.ToString();
                         var ilvlVal = numProps.NumberingLevelReference?.Val?.Value ?? 0;
-                        node.Format["numlevel"] = ilvlVal;
+                        node.Format["numLevel"] = ilvlVal.ToString();
                         var numFmt = GetNumberingFormat(numIdVal, ilvlVal);
                         node.Format["numFmt"] = numFmt;
                         node.Format["listStyle"] = numFmt.ToLowerInvariant() == "bullet" ? "bullet" : "ordered";

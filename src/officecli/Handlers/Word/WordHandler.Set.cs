@@ -2099,13 +2099,13 @@ public partial class WordHandler
                 spacingLine.Line = lsTwips.ToString();
                 spacingLine.LineRule = lsIsMultiplier ? LineSpacingRuleValues.Auto : LineSpacingRuleValues.Exact;
                 return true;
-            case "numid":
+            case "numId" or "numid":
                 var numPr = pProps.NumberingProperties ?? (pProps.NumberingProperties = new NumberingProperties());
-                numPr.NumberingId = new NumberingId { Val = ParseHelpers.SafeParseInt(value, "numid") };
+                numPr.NumberingId = new NumberingId { Val = ParseHelpers.SafeParseInt(value, "numId") };
                 return true;
-            case "numlevel" or "ilvl":
+            case "numLevel" or "numlevel" or "ilvl":
                 var numPr2 = pProps.NumberingProperties ?? (pProps.NumberingProperties = new NumberingProperties());
-                numPr2.NumberingLevelReference = new NumberingLevelReference { Val = ParseHelpers.SafeParseInt(value, "numlevel") };
+                numPr2.NumberingLevelReference = new NumberingLevelReference { Val = ParseHelpers.SafeParseInt(value, "numLevel") };
                 return true;
             case "pbdr.top" or "pbdr.bottom" or "pbdr.left" or "pbdr.right" or "pbdr.between" or "pbdr.bar" or "pbdr.all" or "pbdr":
             case "border.all" or "border" or "border.top" or "border.bottom" or "border.left" or "border.right":
