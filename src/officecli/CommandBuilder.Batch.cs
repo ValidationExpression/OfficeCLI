@@ -93,7 +93,21 @@ static partial class CommandBuilder
                         continue;
                     }
                     var success = response.ExitCode == 0;
-                    results.Add(new BatchResult { Index = bi, Success = success, Item = !success ? item : null, Output = response.Stdout, Error = response.Stderr });
+                    var output = response.Stdout;
+                    // Unwrap resident envelope: extract "data" or "message" from {"success":...,"data":...} / {"success":...,"message":"..."}
+                    if (output != null && json)
+                    {
+                        try
+                        {
+                            using var envDoc = System.Text.Json.JsonDocument.Parse(output);
+                            if (envDoc.RootElement.TryGetProperty("data", out var data))
+                                output = data.GetRawText();
+                            else if (envDoc.RootElement.TryGetProperty("message", out var msg))
+                                output = msg.GetString();
+                        }
+                        catch { /* not JSON envelope, use as-is */ }
+                    }
+                    results.Add(new BatchResult { Index = bi, Success = success, Item = !success ? item : null, Output = output, Error = response.Stderr });
                     if (!success && stopOnError) break;
                 }
                 PrintBatchResults(results, json, items.Count);
