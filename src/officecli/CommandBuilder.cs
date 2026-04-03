@@ -297,7 +297,9 @@ static partial class CommandBuilder
             }
             case "remove":
             {
-                var path = item.Path ?? "/";
+                if (string.IsNullOrEmpty(item.Path))
+                    throw new ArgumentException("'remove' command requires 'path' field. Example: {\"command\": \"remove\", \"path\": \"/slide[1]/shape[2]\"}");
+                var path = item.Path;
                 var warning = handler.Remove(path);
                 var msg = $"Removed {path}";
                 if (warning != null) msg += $"\n{warning}";
@@ -440,7 +442,7 @@ static partial class CommandBuilder
                             if (r.Item != null)
                             {
                                 slimWriter.WritePropertyName("item");
-                                System.Text.Json.JsonSerializer.Serialize(slimWriter, r.Item, BatchJsonContext.Default.Options);
+                                System.Text.Json.JsonSerializer.Serialize(slimWriter, r.Item, BatchJsonContext.Default.BatchItem);
                             }
                         }
                         slimWriter.WriteEndObject();

@@ -69,10 +69,11 @@ static partial class CommandBuilder
                 }
             }
 
-            var items = System.Text.Json.JsonSerializer.Deserialize<List<BatchItem>>(jsonText, BatchJsonContext.Default.ListBatchItem);
-            if (items == null || items.Count == 0)
+            var items = System.Text.Json.JsonSerializer.Deserialize<List<BatchItem>>(jsonText, BatchJsonContext.Default.ListBatchItem) ?? new();
+            if (items.Count == 0)
             {
-                throw new ArgumentException("No commands found in input.");
+                PrintBatchResults(new List<BatchResult>(), json, 0);
+                return 0;
             }
 
             // If a resident process is running, forward each command to it
