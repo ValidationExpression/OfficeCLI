@@ -1527,13 +1527,19 @@ public partial class ExcelHandler
                 if (string.IsNullOrEmpty(sourceSpec))
                     throw new ArgumentException("pivottable requires 'source' property (e.g. source=Sheet1!A1:D100)");
 
+                // R8-7: incidental whitespace around the source spec or its
+                // components (" Sheet1 ! A1:D10 ") is a common paste-from-docs
+                // artefact. Trim the whole string and both sides of the '!'
+                // split so the downstream sheet/range lookup sees clean values.
+                sourceSpec = sourceSpec.Trim();
+
                 string sourceSheetName;
                 string sourceRef;
                 if (sourceSpec.Contains('!'))
                 {
                     var srcParts = sourceSpec.Split('!', 2);
-                    sourceSheetName = srcParts[0].Trim('\'', '"');
-                    sourceRef = srcParts[1];
+                    sourceSheetName = srcParts[0].Trim().Trim('\'', '"').Trim();
+                    sourceRef = srcParts[1].Trim();
                 }
                 else
                 {
