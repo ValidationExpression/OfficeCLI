@@ -61,6 +61,16 @@ internal static partial class PivotTableHelper
         // N≥3 row or col fields → general tree-based renderer (handles arbitrary depth).
         // N≤2 cases continue to use the specialized renderers below for byte-level
         // backward compatibility (regression-tested via test-samples/pivot_baselines).
+        // 2×0×K: 2 row fields, no col fields — not handled by the specialized
+        // N≤2 renderers (MultiRow requires a col axis). Route to the general
+        // tree-based renderer which handles 0-col via an empty colTree.
+        if (rowFieldIndices.Count == 2 && colFieldIndices.Count == 0 && valueFields.Count >= 1)
+        {
+            RenderGeneralPivot(targetSheet, position, headers, columnData,
+                rowFieldIndices, colFieldIndices, valueFields, filterFieldIndices, valueStyleIds);
+            return;
+        }
+
         if (rowFieldIndices.Count >= 3 || colFieldIndices.Count >= 3)
         {
             // CONSISTENCY(no-values-noop): RenderGeneralPivot dereferences
