@@ -1919,7 +1919,13 @@ internal static class PivotTableHelper
                     var rowIdx = firstFilterRow + fi;
                     var filterRow = new Row { RowIndex = (uint)rowIdx };
                     filterRow.AppendChild(MakeStringCell(anchorColIdx, rowIdx, headers[fIdx]));
-                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, "(All)"));
+                    // Round-trip preservation: if the user has manually set a
+                    // locale-specific label (e.g. "(全部)" / "(Tous)") on this
+                    // filter cell in a previous edit, keep it. Fall back to the
+                    // English default only when the cell is missing or empty.
+                    var filterAllLabel = ReadExistingStringAtOrDefault(
+                        targetSheet, sheetData, anchorColIdx + 1, rowIdx, "(All)");
+                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, filterAllLabel));
                     // Insert in row order: existing rows in sheetData start at
                     // anchorRow, so prepend the filter rows to the front.
                     sheetData.InsertAt(filterRow, fi);
@@ -2252,7 +2258,13 @@ internal static class PivotTableHelper
                     var rowIdx = firstFilterRow + fi;
                     var filterRow = new Row { RowIndex = (uint)rowIdx };
                     filterRow.AppendChild(MakeStringCell(anchorColIdx, rowIdx, headers[fIdx]));
-                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, "(All)"));
+                    // Round-trip preservation: if the user has manually set a
+                    // locale-specific label (e.g. "(全部)" / "(Tous)") on this
+                    // filter cell in a previous edit, keep it. Fall back to the
+                    // English default only when the cell is missing or empty.
+                    var filterAllLabel = ReadExistingStringAtOrDefault(
+                        targetSheet, sheetData, anchorColIdx + 1, rowIdx, "(All)");
+                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, filterAllLabel));
                     sheetData.InsertAt(filterRow, fi);
                 }
             }
@@ -2630,7 +2642,13 @@ internal static class PivotTableHelper
                     var rowIdx = firstFilterRow + fi;
                     var filterRow = new Row { RowIndex = (uint)rowIdx };
                     filterRow.AppendChild(MakeStringCell(anchorColIdx, rowIdx, headers[fIdx]));
-                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, "(All)"));
+                    // Round-trip preservation: if the user has manually set a
+                    // locale-specific label (e.g. "(全部)" / "(Tous)") on this
+                    // filter cell in a previous edit, keep it. Fall back to the
+                    // English default only when the cell is missing or empty.
+                    var filterAllLabel = ReadExistingStringAtOrDefault(
+                        targetSheet, sheetData, anchorColIdx + 1, rowIdx, "(All)");
+                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, filterAllLabel));
                     sheetData.InsertAt(filterRow, fi);
                 }
             }
@@ -3088,7 +3106,13 @@ internal static class PivotTableHelper
                     var rowIdx = firstFilterRow + fi;
                     var filterRow = new Row { RowIndex = (uint)rowIdx };
                     filterRow.AppendChild(MakeStringCell(anchorColIdx, rowIdx, headers[fIdx]));
-                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, "(All)"));
+                    // Round-trip preservation: if the user has manually set a
+                    // locale-specific label (e.g. "(全部)" / "(Tous)") on this
+                    // filter cell in a previous edit, keep it. Fall back to the
+                    // English default only when the cell is missing or empty.
+                    var filterAllLabel = ReadExistingStringAtOrDefault(
+                        targetSheet, sheetData, anchorColIdx + 1, rowIdx, "(All)");
+                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, filterAllLabel));
                     sheetData.InsertAt(filterRow, fi);
                 }
             }
@@ -3578,7 +3602,13 @@ internal static class PivotTableHelper
                     var rowIdx = firstFilterRow + fi;
                     var filterRow = new Row { RowIndex = (uint)rowIdx };
                     filterRow.AppendChild(MakeStringCell(anchorColIdx, rowIdx, headers[fIdx]));
-                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, "(All)"));
+                    // Round-trip preservation: if the user has manually set a
+                    // locale-specific label (e.g. "(全部)" / "(Tous)") on this
+                    // filter cell in a previous edit, keep it. Fall back to the
+                    // English default only when the cell is missing or empty.
+                    var filterAllLabel = ReadExistingStringAtOrDefault(
+                        targetSheet, sheetData, anchorColIdx + 1, rowIdx, "(All)");
+                    filterRow.AppendChild(MakeStringCell(anchorColIdx + 1, rowIdx, filterAllLabel));
                     sheetData.InsertAt(filterRow, fi);
                 }
             }
@@ -3710,6 +3740,63 @@ internal static class PivotTableHelper
             DataType = CellValues.InlineString,
             InlineString = new InlineString(new Text(text ?? string.Empty))
         };
+    }
+
+    /// <summary>
+    /// Read the string value of an existing cell at (colIdx, rowIdx) and
+    /// return it if non-empty, otherwise return <paramref name="defaultValue"/>.
+    /// Used by the page filter renderers to preserve a user-localized filter
+    /// label (e.g. "(全部)") on round-trip through <c>RebuildFieldAreas</c>,
+    /// instead of overwriting it with our English default "(All)".
+    ///
+    /// Resolves both InlineString cells and SharedString cells; falls back to
+    /// the raw CellValue text if neither matches. Missing row / missing cell /
+    /// empty text all return the default.
+    /// </summary>
+    private static string ReadExistingStringAtOrDefault(
+        WorksheetPart targetSheet, SheetData sheetData,
+        int colIdx, int rowIdx, string defaultValue)
+    {
+        var cellRef = $"{IndexToCol(colIdx)}{rowIdx}";
+        var row = sheetData.Elements<Row>()
+            .FirstOrDefault(r => r.RowIndex?.Value == (uint)rowIdx);
+        if (row == null) return defaultValue;
+        var cell = row.Elements<Cell>()
+            .FirstOrDefault(c => c.CellReference?.Value == cellRef);
+        if (cell == null) return defaultValue;
+
+        // InlineString: text is embedded in the cell.
+        if (cell.DataType?.Value == CellValues.InlineString)
+        {
+            var inline = cell.InlineString?.Text?.Text ?? cell.InlineString?.InnerText;
+            if (!string.IsNullOrEmpty(inline)) return inline;
+            return defaultValue;
+        }
+
+        // SharedString: CellValue holds the SST index; resolve via workbook.
+        if (cell.DataType?.Value == CellValues.SharedString
+            && cell.CellValue?.Text is { } sstIdxStr
+            && int.TryParse(sstIdxStr, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var sstIdx))
+        {
+            var wbPart = targetSheet.GetParentParts().OfType<WorkbookPart>().FirstOrDefault();
+            var sst = wbPart?.SharedStringTablePart?.SharedStringTable;
+            if (sst != null)
+            {
+                var items = sst.Elements<SharedStringItem>().ToList();
+                if (sstIdx >= 0 && sstIdx < items.Count)
+                {
+                    var txt = items[sstIdx].Text?.Text ?? items[sstIdx].InnerText;
+                    if (!string.IsNullOrEmpty(txt)) return txt;
+                }
+            }
+            return defaultValue;
+        }
+
+        // String-typed (legacy) or untyped: fall back to raw CellValue.
+        if (cell.CellValue?.Text is { Length: > 0 } cv) return cv;
+
+        return defaultValue;
     }
 
     /// <summary>
