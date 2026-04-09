@@ -298,6 +298,21 @@ public static class McpServer
                 CommandBuilder.PrintBatchResults(results, json: true, totalCount: items.Count, output: sw);
                 return sw.ToString().Trim();
             }
+            case "swap":
+            {
+                var file = Arg("file");
+                var path = Arg("path");
+                var path2 = Arg("path2");
+                using var handler = DocumentHandlerFactory.Open(file, editable: true);
+                var (p1, p2) = handler switch
+                {
+                    Handlers.PowerPointHandler ppt => ppt.Swap(path, path2),
+                    Handlers.WordHandler word => word.Swap(path, path2),
+                    Handlers.ExcelHandler excel => excel.Swap(path, path2),
+                    _ => throw new InvalidOperationException("swap not supported for this document type")
+                };
+                return $"Swapped {p1} <-> {p2}";
+            }
             case "raw":
             {
                 var file = Arg("file");
@@ -309,7 +324,8 @@ public static class McpServer
             {
                 var format = Arg("format").ToLowerInvariant();
                 const string strategy = @"## Strategy
-Use view (outline/stats/issues) to understand the document first, then get/query to inspect details, then set/add/remove to modify.
+Use view (outline/stats/issues/annotated) to understand the document first, then get/query to inspect details, then set/add/remove to modify.
+View modes: text, annotated, outline, stats, issues, html, svg (pptx only), forms (docx only).
 For 3+ mutations on the same file, use batch (one open/save cycle) instead of separate calls.
 Get output keys can be used directly as Set input keys (round-trip safe).
 Colors: FF0000, red, rgb(255,0,0), accent1. Sizes: 24pt. Positions: 2cm, 1in, 72pt, or raw EMU.
@@ -320,7 +336,7 @@ Colors: FF0000, red, rgb(255,0,0), accent1. Sizes: 24pt. Positions: 2cm, 1in, 72
                     "xlsx" => @"# XLSX Reference
 
 ## Add types
-sheet, row, cell, col, run (rich text in cell), shape, chart, picture, comment, namedrange, table, validation, pivottable, autofilter, pagebreak, colbreak
+sheet, row, cell, col, run (rich text in cell), shape, chart, picture, comment, namedrange, table, validation, pivottable, autofilter, pagebreak, colbreak, rowbreak, sparkline
 cf (conditional formatting): set type= to databar|colorscale|iconset|formula|topn|aboveaverage|duplicatevalues|uniquevalues|containstext|dateoccurring
 
 ## Cell properties (Set/Add)
@@ -341,12 +357,43 @@ fittopage (1x2|true), header (&CPage &P), footer (&LConfidential), sort (A:asc,B
 ## Run properties (Set /Sheet/A1/run[N])
 text, bold, italic, strike, underline, superscript, subscript, size, color, font
 
+## Pivot table properties (Add/Set)
+source/src (Sheet1!A1:D100), position/pos, rows, cols/columns, values (Name:Sum), filters
+style (PivotStyleMedium9), layout (compact|outline|tabular), sort (asc|desc)
+subtotals (on|off), rowGrandTotals, colGrandTotals
+showRowHeaders, showColHeaders, showRowStripes, showColStripes, showLastColumn
+aggregate (Sum|Count|Average|Max|Min|Product|CountNums|StdDev|Var)
+showDataAs (normal|difference|percent|percent_of_row|percent_of_col|percent_of_total|running_total|rank_asc|rank_desc|index)
+dataField{N}.showAs — per-field display transform override
+
+## Chart properties (Add/Set)
+charttype (bar|column|line|pie|doughnut|area|scatter|radar|...), title, dataRange/range, data
+x, y, width, height (cm/in/pt/emu), categories, colors, series1..20 (.name, .values, .categories)
+datalabels/labels, labelpos, labelfont, axistitle/vtitle, cattitle/htitle
+axismin/min, axismax/max, majorunit, minorunit, axisnumfmt
+gridlines, majorgridlines, minorgridlines, plotareafill/plotfill, chartareafill/chartfill
+linewidth, linedash/dash, marker/markers, markersize, smooth, style/styleid/preset
+gradient, gradients, transparency/opacity, trendline, secondaryaxis/secondary
+referenceline, colorrule/conditionalcolor, view3d, camera, perspective
+holesize, firstsliceangle (pie/doughnut), gapwidth/gap, overlap (bar/column)
+legend (top|bottom|left|right|false), legendfont, title.font/size/color/bold
+datatable, varycolors, scatterstyle, radarstyle
+
+## Sparkline properties (Add/Set)
+cell (F1), range/data (A1:E1), type (line|column|stacked), color, negativecolor
+markers, highpoint, lowpoint, firstpoint, lastpoint, negative (boolean flags)
+highmarkercolor, lowmarkercolor, firstmarkercolor, lastmarkercolor, markerscolor, lineweight
+
 ## CF properties
 sqref/range, color (font), fill, bold, italic, strike, underline, border (thin|medium), numfmt
 topn: rank, bottom (true), percent (true)
 aboveaverage: below (true)
 containstext: text
 dateoccurring: period (today|yesterday|tomorrow|last7days|thisweek|lastweek|thismonth|lastmonth)
+
+## Validation properties (Add)
+sqref/ref, type (list|whole|decimal|date|time|textlength|custom), operator (between|equal|...)
+formula1, formula2, allowBlank, showError, showInput, errorTitle, error, promptTitle, prompt
 
 ## Workbook settings (Set / or /workbook)
 workbook.date1904, workbook.codeName, workbook.filterPrivacy
@@ -359,8 +406,8 @@ extended.company, extended.manager, extended.template",
                     "pptx" => @"# PPTX Reference
 
 ## Add types
-slide, shape, textbox, picture, chart, table, row, cell, paragraph, run
-group, connector, animation, video, equation, notes, zoom
+slide, shape, textbox, picture, chart, table, row, cell, col/column, paragraph, run
+group, connector, animation, video, equation, notes, zoom, 3dmodel/model3d
 
 ## Shape properties (Set/Add)
 text, bold, italic, underline, strike, superscript, subscript
@@ -388,7 +435,8 @@ extended.company, extended.manager, extended.template",
 ## Add types
 paragraph, run, table, row, cell, picture, hyperlink, section
 style, chart, equation, footnote, endnote, bookmark, comment
-toc, pagebreak, header, footer, watermark, sdt
+toc, pagebreak, columnbreak, header, footer, watermark, sdt
+field (pagenum|numpages|date|author), formfield
 
 ## Run properties (Set/Add)
 text, bold, italic, underline, strike, superscript, subscript
@@ -443,7 +491,7 @@ extended.company, extended.manager, extended.template",
 
     private const string ToolDescription = @"Create, read, and modify Office documents (.docx, .xlsx, .pptx).
 
-Commands: create (file), view (file, mode: text|annotated|outline|stats|issues), get (file, path, depth), query (file, selector), set (file, path, props[]), add (file, parent, type, props[], index), remove (file, path), move (file, path, to, index), validate (file), batch (file, commands), raw (file, part), help (format: xlsx|pptx|docx).
+Commands: create (file), view (file, mode: text|annotated|outline|stats|issues|html|svg|forms), get (file, path, depth), query (file, selector), set (file, path, props[]), add (file, parent, type, props[], index/after/before), remove (file, path), move (file, path, to, index/after/before), swap (file, path, path2), validate (file), batch (file, commands), raw (file, part), help (format: xlsx|pptx|docx).
 
 Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=value strings. Call help for detailed property reference per format.";
 
@@ -458,7 +506,7 @@ Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=val
         // command
         w.WriteStartObject("command"); w.WriteString("type", "string");
         w.WriteStartArray("enum");
-        foreach (var c in new[] { "create", "view", "get", "query", "set", "add", "remove", "move", "validate", "batch", "raw", "help" })
+        foreach (var c in new[] { "create", "view", "get", "query", "set", "add", "remove", "move", "swap", "validate", "batch", "raw", "help" })
             w.WriteStringValue(c);
         w.WriteEndArray();
         w.WriteString("description", "Command to execute");
@@ -478,13 +526,17 @@ Paths are 1-based: /slide[1]/shape[2], /body/p[3], /Sheet1/A1. Props are key=val
         w.WriteStartObject("items"); w.WriteString("type", "string"); w.WriteEndObject();
         w.WriteString("description", "key=value pairs (e.g. bold=true, color=FF0000, text=Hello)"); w.WriteEndObject();
         // mode
-        w.WriteStartObject("mode"); w.WriteString("type", "string"); w.WriteString("description", "View mode: text, annotated, outline, stats, issues, html"); w.WriteEndObject();
+        w.WriteStartObject("mode"); w.WriteString("type", "string"); w.WriteString("description", "View mode: text, annotated, outline, stats, issues, html, svg (pptx), forms (docx)"); w.WriteEndObject();
         // depth
         w.WriteStartObject("depth"); w.WriteString("type", "number"); w.WriteString("description", "Child depth for get (default 1)"); w.WriteEndObject();
         // index
         w.WriteStartObject("index"); w.WriteString("type", "number"); w.WriteString("description", "Insert position (0-based) for add/move"); w.WriteEndObject();
         // to
         w.WriteStartObject("to"); w.WriteString("type", "string"); w.WriteString("description", "Target parent path for move"); w.WriteEndObject();
+        // after, before, path2
+        w.WriteStartObject("after"); w.WriteString("type", "string"); w.WriteString("description", "Insert after this sibling path (for add/move)"); w.WriteEndObject();
+        w.WriteStartObject("before"); w.WriteString("type", "string"); w.WriteString("description", "Insert before this sibling path (for add/move)"); w.WriteEndObject();
+        w.WriteStartObject("path2"); w.WriteString("type", "string"); w.WriteString("description", "Second path for swap"); w.WriteEndObject();
         // start, end, max_lines
         w.WriteStartObject("start"); w.WriteString("type", "number"); w.WriteString("description", "Start line for view"); w.WriteEndObject();
         w.WriteStartObject("end"); w.WriteString("type", "number"); w.WriteString("description", "End line for view"); w.WriteEndObject();
