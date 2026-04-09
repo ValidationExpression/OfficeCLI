@@ -118,6 +118,12 @@ internal static class PivotTableHelper
             ["valuefields"]  = "values",
             // grand totals
             ["columngrandtotals"] = "colgrandtotals",
+            // <pivotTableStyleInfo> col/column spelling aliases: the
+            // OOXML attribute names use "column" but we prefer "col" as
+            // the canonical CLI key to match the existing `cols=` axis
+            // key. Add-path warning suppression relies on this rewrite.
+            ["showcolumnstripes"] = "showcolstripes",
+            ["showcolumnheaders"] = "showcolheaders",
         };
 
     /// <summary>
@@ -131,6 +137,36 @@ internal static class PivotTableHelper
         if (string.IsNullOrEmpty(key)) return key;
         var lower = key.ToLowerInvariant();
         return _pivotKeyAliases.TryGetValue(lower, out var canonical) ? canonical : lower;
+    }
+
+    /// <summary>
+    /// Validate a user-supplied pivot table name and return the trimmed value.
+    /// Throws ArgumentException for empty, whitespace-only, control-character,
+    /// or over-255-character names. Does NOT check workbook-level uniqueness
+    /// (that is the caller's responsibility).
+    /// R16-2: extracted from CreatePivotTable so SetPivotTableProperties can
+    /// reuse the same validation — previously Set accepted empty/whitespace
+    /// names without any check.
+    /// </summary>
+    internal static string ValidatePivotName(string name)
+    {
+        // Empty string is rejected — a blank name is always an error.
+        if (string.IsNullOrEmpty(name))
+            throw new ArgumentException("pivot name must not be empty");
+        var trimmed = name.Trim();
+        // Whitespace-only names are rejected — R8-4.
+        if (trimmed.Length == 0)
+            throw new ArgumentException("pivot name must not be whitespace-only");
+        // ASCII control characters are rejected — R8-5.
+        foreach (var ch in trimmed)
+        {
+            if (ch < 0x20 || ch == 0x7F)
+                throw new ArgumentException("pivot name contains invalid control characters");
+        }
+        // 255-character limit — R11-4.
+        if (trimmed.Length > 255)
+            throw new ArgumentException("pivot name exceeds 255-character limit");
+        return trimmed;
     }
 
     /// <summary>
@@ -148,6 +184,12 @@ internal static class PivotTableHelper
             "aggregate", "showdataas", "topn",
             "sort",
             "grandtotals", "rowgrandtotals", "colgrandtotals",
+            // <pivotTableStyleInfo> bool toggles (see ApplyPivotStyleInfoProps).
+            // Canonical keys only; col/column aliases are handled by the switch
+            // in SetPivotTableProperties and the helper's case labels.
+            "showrowstripes", "showcolstripes",
+            "showrowheaders", "showcolheaders",
+            "showlastcolumn",
         };
 
     /// <summary>
@@ -728,28 +770,11 @@ internal static class PivotTableHelper
         pivotPart.AddPart(cachePart);
 
         string pivotName;
-        if (properties.TryGetValue("name", out var explicitName) && !string.IsNullOrWhiteSpace(explicitName))
+        if (properties.TryGetValue("name", out var explicitName) && !string.IsNullOrEmpty(explicitName))
         {
-            // R8-4: whitespace-only names are rejected (trim + whitespace
-            // check). We also Trim before storing so "  MyPivot " doesn't
-            // persist the surrounding noise.
-            explicitName = explicitName.Trim();
-            // R8-5: ASCII control characters (0x00-0x1F and 0x7F) produce
-            // invalid XML identifiers and confusing Excel UI. Reject them
-            // up front — same error shape as whitespace/collision paths.
-            foreach (var ch in explicitName)
-            {
-                if (ch < 0x20 || ch == 0x7F)
-                    throw new ArgumentException(
-                        "pivot name contains invalid control characters");
-            }
-            // R11-4: Excel limits pivot table names to 255 characters. Reject
-            // longer names up front rather than letting Excel silently truncate
-            // (or in some cases reject the file on open with a corrupted-doc
-            // warning).
-            if (explicitName.Length > 255)
-                throw new ArgumentException(
-                    "pivot name exceeds 255-character limit");
+            // R8-4 / R8-5 / R11-4 / R16-2: delegate all name validation to
+            // ValidatePivotName so Add and Set share identical rules.
+            explicitName = ValidatePivotName(explicitName);
             // R6-1: user-supplied name must be unique within the workbook.
             // Throw ArgumentException rather than silently allowing the
             // collision (Excel would auto-rename on open, but the on-disk
@@ -757,14 +782,6 @@ internal static class PivotTableHelper
             if (existingPivotNames.Contains(explicitName))
                 throw new ArgumentException($"Pivot name '{explicitName}' already exists in workbook");
             pivotName = explicitName;
-        }
-        else if (properties.TryGetValue("name", out var wsName) && !string.IsNullOrEmpty(wsName))
-        {
-            // R8-4: name key was provided but contained only whitespace
-            // characters. Reject up front rather than falling through to
-            // the auto-generated default — the user clearly intended a
-            // specific name and a silent rename would mask the bug.
-            throw new ArgumentException("pivot name must not be whitespace-only");
         }
         else
         {
@@ -792,6 +809,12 @@ internal static class PivotTableHelper
         var pivotDef = BuildPivotTableDefinition(
             pivotName, cacheId, position, headers, columnData,
             rowFields, colFields, filterFields, valueFields, style, columnNumFmtIds, dateGroups);
+        // Overlay user-supplied <pivotTableStyleInfo> bool attributes
+        // (showRowStripes, showColStripes, showRowHeaders, showColHeaders,
+        // showLastColumn) onto the style info element BuildPivotTableDefinition
+        // just created with defaults. Shared helper with the Set path so
+        // Add and Set accept the same vocabulary / validation.
+        ApplyPivotStyleInfoProps(EnsurePivotTableStyle(pivotDef), properties);
         pivotPart.PivotTableDefinition = pivotDef;
         pivotPart.PivotTableDefinition.Save();
 
@@ -4063,6 +4086,96 @@ internal static class PivotTableHelper
         return result;
     }
 
+    // ==================== Pivot style info helpers ====================
+    //
+    // PivotTableStyle carries both the style NAME and five bool layout
+    // toggles (showRowStripes, showColStripes, showRowHeaders,
+    // showColHeaders, showLastColumn). CONSISTENCY(canonical-format-key):
+    // every toggle is a first-class Set key with a canonical lowercase
+    // form matching ReadPivotTableProperties output. The helper below is
+    // the single ensure-or-create site so Add and Set never diverge on
+    // defaults, and style-name changes preserve existing toggles.
+
+    /// <summary>
+    /// Return the pivot's existing &lt;pivotTableStyleInfo&gt; element, creating
+    /// one with the project-standard defaults if absent. Callers then
+    /// mutate individual attributes in place. Defaults match the hard-
+    /// coded values previously duplicated in CreatePivotTable and the
+    /// Set 'style' case (row/col headers on, stripes off, last column on).
+    /// </summary>
+    private static PivotTableStyle EnsurePivotTableStyle(PivotTableDefinition pivotDef)
+    {
+        if (pivotDef.PivotTableStyle == null)
+        {
+            pivotDef.PivotTableStyle = new PivotTableStyle
+            {
+                ShowRowHeaders = true,
+                ShowColumnHeaders = true,
+                ShowRowStripes = false,
+                ShowColumnStripes = false,
+                ShowLastColumn = true
+            };
+        }
+        return pivotDef.PivotTableStyle;
+    }
+
+    /// <summary>
+    /// Strict bool parser for pivot style toggles. Accepts true/false/1/0/
+    /// yes/no/on/off (case-insensitive) and throws ArgumentException on
+    /// anything else. CONSISTENCY(strict-enums): matches the sort-mode and
+    /// showdataas reject-unknown behavior introduced in the recent pivot
+    /// validation sweep — silent fallbacks mask typos.
+    /// </summary>
+    private static bool ParsePivotStyleBool(string key, string value)
+    {
+        switch ((value ?? "").Trim().ToLowerInvariant())
+        {
+            case "true": case "1": case "yes": case "on": return true;
+            case "false": case "0": case "no": case "off": return false;
+            default:
+                throw new ArgumentException(
+                    $"invalid {key}: '{value}'. Valid: true, false");
+        }
+    }
+
+    /// <summary>
+    /// Apply the five &lt;pivotTableStyleInfo&gt; bool attributes from the
+    /// caller's properties dict onto an existing PivotTableStyle element.
+    /// Only keys actually present in the dict are applied, so Set
+    /// operations can change one toggle without clobbering the others.
+    /// Accepts both canonical (showColStripes) and OOXML-verbatim
+    /// (showColumnStripes) spellings for the "col/column" siblings,
+    /// matching the existing alias policy.
+    /// </summary>
+    private static void ApplyPivotStyleInfoProps(
+        PivotTableStyle styleInfo,
+        Dictionary<string, string> properties)
+    {
+        foreach (var (rawKey, value) in properties)
+        {
+            switch (rawKey.ToLowerInvariant())
+            {
+                case "showrowstripes":
+                    styleInfo.ShowRowStripes = ParsePivotStyleBool(rawKey, value);
+                    break;
+                case "showcolstripes":
+                case "showcolumnstripes":
+                    styleInfo.ShowColumnStripes = ParsePivotStyleBool(rawKey, value);
+                    break;
+                case "showrowheaders":
+                    styleInfo.ShowRowHeaders = ParsePivotStyleBool(rawKey, value);
+                    break;
+                case "showcolheaders":
+                case "showcolumnheaders":
+                    styleInfo.ShowColumnHeaders = ParsePivotStyleBool(rawKey, value);
+                    break;
+                case "showlastcolumn":
+                    styleInfo.ShowLastColumn = ParsePivotStyleBool(rawKey, value);
+                    break;
+            }
+        }
+    }
+
     private static PivotTableDefinition BuildPivotTableDefinition(
         string name, uint cacheId, string position,
         string[] headers, List<string[]> columnData,
@@ -4323,16 +4436,13 @@ internal static class PivotTableHelper
             pivotDef.DataFields = df;
         }
 
-        // Style
-        pivotDef.PivotTableStyle = new PivotTableStyle
-        {
-            Name = styleName,
-            ShowRowHeaders = true,
-            ShowColumnHeaders = true,
-            ShowRowStripes = false,
-            ShowColumnStripes = false,
-            ShowLastColumn = true
-        };
+        // Style: create with project-standard defaults via the shared
+        // EnsurePivotTableStyle helper so Set and Add never diverge on
+        // defaults. The caller (CreatePivotTable) overlays any user-
+        // supplied style-info toggles via ApplyPivotStyleInfoProps before
+        // the definition is saved.
+        var styleInfo = EnsurePivotTableStyle(pivotDef);
+        styleInfo.Name = styleName;
 
         return pivotDef;
     }
@@ -5128,6 +5238,21 @@ internal static class PivotTableHelper
         var styleInfo = pivotDef.PivotTableStyle;
         if (styleInfo?.Name?.HasValue == true)
             node.Format["style"] = styleInfo.Name.Value;
+        // <pivotTableStyleInfo> bool toggles. Emit as "true"/"false" strings
+        // for symmetry with the Set input form (accepts true/false/1/0/on/off
+        // via ParsePivotStyleBool; Get emits the canonical true/false pair
+        // so a round-trip Get → Set is a no-op). Defaults (row/col headers
+        // on, stripes off, last column on) are surfaced explicitly rather
+        // than being elided, so consumers reading the dict never have to
+        // know which value is the OOXML default.
+        if (styleInfo != null)
+        {
+            node.Format["showRowHeaders"] = (styleInfo.ShowRowHeaders?.Value ?? true) ? "true" : "false";
+            node.Format["showColHeaders"] = (styleInfo.ShowColumnHeaders?.Value ?? true) ? "true" : "false";
+            node.Format["showRowStripes"] = (styleInfo.ShowRowStripes?.Value ?? false) ? "true" : "false";
+            node.Format["showColStripes"] = (styleInfo.ShowColumnStripes?.Value ?? false) ? "true" : "false";
+            node.Format["showLastColumn"] = (styleInfo.ShowLastColumn?.Value ?? true) ? "true" : "false";
+        }
 
         // R11-3: Grand totals readback. Both attributes default to true in
         // OOXML, so emit "true" when absent (default) and reflect explicit
@@ -5389,7 +5514,11 @@ internal static class PivotTableHelper
             switch (key.ToLowerInvariant())
             {
                 case "name":
-                    pivotDef.Name = value;
+                    // R16-2: validate via shared helper so Set rejects
+                    // empty / whitespace / control-char names just like Add.
+                    // CONSISTENCY(pivot-name-validation): same rules, same
+                    // error messages for both Add and Set paths.
+                    pivotDef.Name = ValidatePivotName(value);
                     break;
                 case "source":
                 case "src":
@@ -5414,15 +5543,31 @@ internal static class PivotTableHelper
                     break;
                 case "style":
                 {
-                    pivotDef.PivotTableStyle = new PivotTableStyle
-                    {
-                        Name = value,
-                        ShowRowHeaders = true,
-                        ShowColumnHeaders = true,
-                        ShowRowStripes = false,
-                        ShowColumnStripes = false,
-                        ShowLastColumn = true
-                    };
+                    // Preserve existing style-info bool toggles so a bare
+                    // `style=PivotStyleMedium9` does not clobber a previously-
+                    // set showRowStripes=true. EnsurePivotTableStyle creates
+                    // the element with defaults if absent; only the Name is
+                    // overwritten here.
+                    var styleInfo = EnsurePivotTableStyle(pivotDef);
+                    styleInfo.Name = value;
+                    break;
+                }
+                case "showrowstripes":
+                case "showcolstripes":
+                case "showcolumnstripes":
+                case "showrowheaders":
+                case "showcolheaders":
+                case "showcolumnheaders":
+                case "showlastcolumn":
+                {
+                    // Individual <pivotTableStyleInfo> bool toggles. Route
+                    // through the shared ApplyPivotStyleInfoProps helper so
+                    // Add and Set share the exact same validation + alias
+                    // rules (col/column siblings) and neither path can
+                    // diverge on which OOXML attribute a key maps to.
+                    ApplyPivotStyleInfoProps(
+                        EnsurePivotTableStyle(pivotDef),
+                        new Dictionary<string, string> { [key] = value });
                     break;
                 }
                 case "rows":
