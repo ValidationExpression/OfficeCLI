@@ -929,6 +929,15 @@ internal static class PivotTableHelper
             targetSheet, position, headers, columnData,
             rowFields, colFields, valueFields, filterFields, columnStyleIds);
 
+        // After rendering, collapse any duplicate <row r="N"> elements the
+        // renderer may have appended if this sheet already had pivot-rendered
+        // rows (second pivot in same sheet → shared row indices). OOXML
+        // requires unique row elements per index; Excel rejects the file with
+        // "problem with some content" otherwise.
+        var targetSheetData = targetSheet.Worksheet?.GetFirstChild<SheetData>();
+        if (targetSheetData != null)
+            DedupeSheetDataRows(targetSheetData);
+
         // Return 1-based index
         return targetSheet.PivotTableParts.ToList().IndexOf(pivotPart) + 1;
     }
@@ -1376,6 +1385,67 @@ internal static class PivotTableHelper
                 rowsToRemove.Add(row);
         }
         foreach (var r in rowsToRemove) r.Remove();
+    }
+
+    /// <summary>
+    /// Merge duplicate &lt;row&gt; elements in sheetData into one element per
+    /// RowIndex, consolidating all Cell children into the winner in column
+    /// order. Also sorts the resulting rows by RowIndex.
+    ///
+    /// Why: OOXML schema requires each &lt;row r="N"&gt; to be unique within
+    /// &lt;sheetData&gt;. When a second pivot is added to a sheet that already
+    /// has pivot-rendered rows (e.g. a second pivot at J1 alongside an E1
+    /// pivot in the same sheet), the per-renderer "new Row { RowIndex=N };
+    /// sheetData.AppendChild(row)" pattern creates duplicates for any row
+    /// index the two pivots share. Excel rejects the file with "We found a
+    /// problem with some content" at open.
+    ///
+    /// Call this at the tail of any render path that may have appended rows.
+    /// </summary>
+    internal static void DedupeSheetDataRows(SheetData sheetData)
+    {
+        // Group by RowIndex. Rows without RowIndex are left alone.
+        var byIdx = new Dictionary<uint, List<Row>>();
+        foreach (var row in sheetData.Elements<Row>().ToList())
+        {
+            var idx = row.RowIndex?.Value;
+            if (idx == null) continue;
+            if (!byIdx.TryGetValue(idx.Value, out var list))
+            {
+                list = new List<Row>();
+                byIdx[idx.Value] = list;
+            }
+            list.Add(row);
+        }
+
+        foreach (var (idx, list) in byIdx)
+        {
+            if (list.Count <= 1) continue;
+            // Merge: keep the first row element, move all cells from the rest
+            // into it, then remove the empty duplicates.
+            var winner = list[0];
+            for (int i = 1; i < list.Count; i++)
+            {
+                foreach (var cell in list[i].Elements<Cell>().ToList())
+                {
+                    cell.Remove();
+                    winner.AppendChild(cell);
+                }
+                list[i].Remove();
+            }
+            // Sort cells by column index for Excel-friendly ordering.
+            var sorted = winner.Elements<Cell>()
+                .OrderBy(c => ColToIndex((c.CellReference?.Value ?? "A1")
+                    .TrimEnd('0','1','2','3','4','5','6','7','8','9')))
+                .ToList();
+            foreach (var c in sorted) { c.Remove(); winner.AppendChild(c); }
+        }
+
+        // Sort rows themselves by RowIndex to keep sheetData ordered.
+        var orderedRows = sheetData.Elements<Row>()
+            .OrderBy(r => r.RowIndex?.Value ?? 0)
+            .ToList();
+        foreach (var r in orderedRows) { r.Remove(); sheetData.AppendChild(r); }
     }
 
     // ==================== Pivot Output Renderer ====================
@@ -6467,6 +6537,11 @@ internal static class PivotTableHelper
                     hostSheet, anchorRefForGeometry, cacheHeaders, cacheColumnData,
                     rowFieldIndices, colFieldIndices, valueFields, filterFieldIndices,
                     sourceColumnStyleIds);
+
+                // Collapse any duplicate <row r="N"> elements produced by the
+                // re-render interacting with other pivots in the same sheet.
+                // See DedupeSheetDataRows docstring.
+                DedupeSheetDataRows(sheetData);
             }
         }
     }
