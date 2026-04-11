@@ -88,22 +88,29 @@ public partial class ExcelHandler
         var wbStylesPart = _doc.WorkbookPart?.WorkbookStylesPart;
         var stylesheet = wbStylesPart?.Stylesheet;
 
-        // If any sheet has a pivot table, open an editable in-memory copy so we
-        // can re-materialize cells from the pivot cache. The copy's WorksheetParts
-        // replace the originals for rendering; styles/theme come from _doc (identical).
+        // If any sheet has a pivot table, build an editable in-memory copy so
+        // we can re-materialize cells from the pivot cache without mutating
+        // the live _doc. The copy's WorksheetParts replace the originals for
+        // rendering; styles/theme come from _doc (identical).
+        //
+        // CONSISTENCY(pivot-clone-in-memory): we clone _doc directly instead of
+        // re-opening _filePath from disk. The earlier "read the file back via
+        // FileStream(FileShare.ReadWrite)" approach races the handler's still-
+        // held editable handle on macOS and throws IOException despite the
+        // share-mode hint — the error surfaces as a trailing "process cannot
+        // access" stderr after every add pivot/slicer command, and worse, on
+        // every SUBSEQUENT command once the file has a pivot part at all (the
+        // `sheets.Any(...PivotTableParts...)` branch fires on every ViewAsHtml
+        // from the NotifyWatch path). SpreadsheetDocument.Clone(Stream, bool)
+        // serialises the already-loaded package into the MemoryStream without
+        // touching disk, so there is no second file handle to race.
         MemoryStream? pivotMs = null;
         SpreadsheetDocument? pivotDoc = null;
         List<(string Name, WorksheetPart Part)>? pivotSheets = null;
         if (sheets.Any(s => s.Part.PivotTableParts.Any()))
         {
             pivotMs = new MemoryStream();
-            // Use FileShare.ReadWrite to avoid conflicting with the handler's
-            // open editable handle on the same file. File.OpenRead() uses
-            // FileShare.Read which fails when another handle has write access.
-            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                fs.CopyTo(pivotMs);
-            pivotMs.Position = 0;
-            pivotDoc = SpreadsheetDocument.Open(pivotMs, isEditable: true);
+            pivotDoc = (SpreadsheetDocument)_doc.Clone(pivotMs, isEditable: true);
             pivotSheets = GetWorksheets(pivotDoc);
 
             foreach (var (_, wsPart) in pivotSheets)
