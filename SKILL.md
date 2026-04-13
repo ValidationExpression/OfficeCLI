@@ -56,15 +56,14 @@ Replace `pptx` with `docx` or `xlsx`. Commands: `view`, `get`, `query`, `set`, `
 
 ## Performance: Resident Mode
 
-For multi-step workflows (3+ commands on the same file), use `create`/`open` + `close`:
+**Every command auto-starts a resident on first access** (60s idle timeout) — file-lock conflicts are automatically avoided. Explicit `open`/`close` is still recommended for longer sessions (12min idle):
 ```bash
-officecli create report.docx     # create blank file and keep in memory
-officecli open report.docx       # or open existing file and keep in memory
+officecli open report.docx       # explicitly keep in memory
 officecli set report.docx ...    # no file I/O overhead
 officecli close report.docx      # save and release
 ```
 
-Skipping `close` still works (the resident exits on its own after 60s idle for `create`, 12min for `open`), but explicit `close` releases the file immediately and guarantees the save is flushed before the next command sees the file on disk.
+Opt out of auto-start: `OFFICECLI_NO_AUTO_RESIDENT=1`. Skipping `close` still works (resident exits on idle), but explicit `close` guarantees the file is flushed before the next command reads it.
 
 ---
 
@@ -175,7 +174,7 @@ officecli watch <file> [--port N]      # Start preview server (default port 1808
 officecli unwatch <file>               # Stop the preview server
 ```
 
-Open the printed `http://localhost:N` URL in a browser. Click any element to select; shift/cmd/ctrl+click to multi-select; drag from empty space to box-select (rubber-band). PPT/Word uses blue outline; Excel uses native-style green selection with crosshair.
+Open the printed `http://localhost:N` URL in a browser. Click any element to select; shift/cmd/ctrl+click to multi-select; drag from empty space to box-select (rubber-band). PPT/Word uses blue outline; Excel uses native-style green selection with crosshair and rectangular range selection. **Excel extras:** double-click a cell to edit inline (shows formula, commits on Enter/Tab); drag a chart to reposition it.
 
 ### `get <file> selected` — read what the user clicked
 
