@@ -526,6 +526,59 @@
         e.stopPropagation();
     }, true);
 
+    // ===== Double-click inline editing (Excel-style) =====
+    var _editingCell = null; // currently editing td element
+    document.addEventListener('dblclick', function(e) {
+        var td = e.target.closest('td[data-path]');
+        if (!td) return;
+        var path = td.getAttribute('data-path');
+        if (!path || !_parseCellPath(path)) return;
+        if (_editingCell) return; // already editing
+
+        _editingCell = td;
+        var originalText = td.textContent || '';
+        // Strip data-bar/icon overlays — get just the text node content
+        var textSpan = td.querySelector('.cell-text') || td;
+        var editText = textSpan.textContent || '';
+
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.value = editText;
+        input.style.cssText = 'width:100%;height:100%;border:none;outline:2px solid #217346;' +
+            'padding:1px 4px;font:inherit;background:#fff;box-sizing:border-box;' +
+            'position:absolute;left:0;top:0;z-index:2000;';
+        td.style.position = 'relative';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+
+        function commit() {
+            if (!_editingCell) return;
+            var newValue = input.value;
+            input.remove();
+            _editingCell = null;
+            if (newValue === editText) return; // no change
+            // POST edit to watch server
+            fetch('/api/edit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: path, prop: 'text', value: newValue })
+            }).catch(function() {});
+        }
+        function cancel() {
+            if (!_editingCell) return;
+            input.remove();
+            _editingCell = null;
+        }
+        input.addEventListener('keydown', function(ke) {
+            if (ke.key === 'Enter') { ke.preventDefault(); commit(); }
+            else if (ke.key === 'Escape') { ke.preventDefault(); cancel(); }
+        });
+        input.addEventListener('blur', commit);
+        e.preventDefault();
+        e.stopPropagation();
+    }, true);
+
     // ===== Cell-to-cell drag selection (Excel-style) =====
     // Mousedown on an Excel cell <td> starts a drag. Dragging to another cell
     // selects the rectangular range. Ctrl/Cmd+drag adds to existing selection.

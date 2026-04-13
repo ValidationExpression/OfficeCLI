@@ -1420,6 +1420,13 @@ internal class WatchServer : IDisposable
                 return;
             }
 
+            if (requestLine.StartsWith("POST /api/edit", StringComparison.Ordinal))
+            {
+                await HandlePostEditAsync(stream, headers, bodyPrefix, token);
+                client.Close();
+                return;
+            }
+
             // BUG-TESTER-R503: GET/PUT/etc on /api/selection must return 405,
             // not fall through to the HTML preview. Without this, an API
             // client that uses the wrong verb gets back a 200 HTML page and
@@ -1615,6 +1622,75 @@ internal class WatchServer : IDisposable
             statusText = "Bad Request";
         }
 
+        var resp = Encoding.UTF8.GetBytes(
+            $"HTTP/1.1 {statusCode} {statusText}\r\nContent-Length: 0\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n");
+        await stream.WriteAsync(resp, token);
+    }
+
+    /// <summary>
+    /// Handle POST /api/edit — spawn officecli set as a child process to modify the file.
+    /// The set command will notify the watch server via named pipe, triggering an SSE refresh.
+    /// WatchServer never opens the file directly (see CLAUDE.md "Watch Server Rules").
+    /// </summary>
+    private async Task HandlePostEditAsync(NetworkStream stream, Dictionary<string, string> headers, string bodyPrefix, CancellationToken token)
+    {
+        int statusCode = 204;
+        string statusText = "No Content";
+        try
+        {
+            // Read body (same pattern as selection handler)
+            int contentLength = 0;
+            if (headers.TryGetValue("Content-Length", out var clStr) && int.TryParse(clStr, out var cl))
+                contentLength = cl;
+            if (contentLength > MaxSelectionBodyBytes) throw new InvalidDataException("body too large");
+
+            var body = bodyPrefix;
+            if (contentLength > body.Length)
+            {
+                var sb = new StringBuilder(body);
+                var buf = new byte[4096];
+                int have = Encoding.UTF8.GetByteCount(body);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                cts.CancelAfter(PostBodyReadTimeout);
+                while (have < contentLength)
+                {
+                    var n = await stream.ReadAsync(buf, cts.Token);
+                    if (n == 0) break;
+                    sb.Append(Encoding.UTF8.GetString(buf, 0, n));
+                    have += n;
+                }
+                body = sb.ToString();
+            }
+
+            // Parse: {"path": "/Sheet1/A1", "prop": "text", "value": "Hello"}
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var path = root.GetProperty("path").GetString() ?? "";
+            var prop = root.GetProperty("prop").GetString() ?? "text";
+            var value = root.GetProperty("value").GetString() ?? "";
+
+            // Spawn officecli set as child process
+            var exe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "officecli";
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exe,
+                ArgumentList = { "set", _filePath, path, "--prop", $"{prop}={value}" },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc != null)
+            {
+                await proc.WaitForExitAsync(token);
+                // set command auto-notifies watch via named pipe → SSE refresh
+            }
+        }
+        catch
+        {
+            statusCode = 400; statusText = "Bad Request";
+        }
         var resp = Encoding.UTF8.GetBytes(
             $"HTTP/1.1 {statusCode} {statusText}\r\nContent-Length: 0\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n");
         await stream.WriteAsync(resp, token);
