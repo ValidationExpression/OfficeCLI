@@ -1868,7 +1868,9 @@ public partial class ExcelHandler
                 // sync. See CLAUDE.md "Consistency > Robustness".
                 case "sort":
                 {
-                    ws.GetFirstChild<SortState>()?.Remove();
+                    // R7-3: remove ALL sortState children (malformed files may
+                    // carry more than one; GetFirstChild leaves stragglers).
+                    foreach (var __ss in ws.Elements<SortState>().ToList()) __ss.Remove();
                     if (string.IsNullOrEmpty(value) || value.Equals("none", StringComparison.OrdinalIgnoreCase))
                         break;
 
@@ -1888,6 +1890,15 @@ public partial class ExcelHandler
                     int minRowIdx = (int)rows.Min(r => r.RowIndex?.Value ?? 1u);
                     int maxRowIdx = (int)rows.Max(r => r.RowIndex?.Value ?? 1u);
 
+                    // CONSISTENCY(sort-header-default): sortHeader defaults to false
+                    // (row 1 participates in the reorder). This matches our general
+                    // "caller states intent explicitly" rule and is documented in help.
+                    // R4-D1 and R7-4 both proposed auto-detecting headers (type-mismatch
+                    // heuristic, first-row-is-string warning). Rejected: heuristic
+                    // warnings ship false positives on legitimately-heterogeneous
+                    // row-1 data and are spammy in pipelines. Future revisit: make
+                    // sortHeader default=true project-wide as a breaking change,
+                    // documented in release notes — do NOT add a per-call warning.
                     bool sortHeader = properties.TryGetValue("sortheader", out var shv) && IsTruthy(shv);
                     SortRangeRows(worksheet, 1, minRowIdx, maxCol, maxRowIdx, value, sortHeader);
                     break;
@@ -2070,7 +2081,9 @@ public partial class ExcelHandler
             throw new ArgumentException("sort value cannot be empty");
         if (sortSpec.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
-            GetSheet(worksheet).GetFirstChild<SortState>()?.Remove();
+            // R7-3: drop every SortState, not just the first.
+            var __ws0 = GetSheet(worksheet);
+            foreach (var __ss in __ws0.Elements<SortState>().ToList()) __ss.Remove();
             return;
         }
 
@@ -2252,11 +2265,15 @@ public partial class ExcelHandler
             {
                 ordered = ordered.ThenBy(x => x.Keys[idx].Rank);
             }
+            // R7-1: use case-insensitive comparer to match Excel's default sort
+            // behavior. sortState defaults caseSensitive=false, so the physical
+            // order must agree with that metadata declaration. Swapping to
+            // OrdinalIgnoreCase also matches Excel's user-visible default.
             ordered = desc
                 ? ordered.ThenByDescending(x => x.Keys[idx].NumVal)
-                         .ThenByDescending(x => x.Keys[idx].StrVal, StringComparer.Ordinal)
+                         .ThenByDescending(x => x.Keys[idx].StrVal, StringComparer.OrdinalIgnoreCase)
                 : ordered.ThenBy(x => x.Keys[idx].NumVal)
-                         .ThenBy(x => x.Keys[idx].StrVal, StringComparer.Ordinal);
+                         .ThenBy(x => x.Keys[idx].StrVal, StringComparer.OrdinalIgnoreCase);
         }
         var sortedRows = ordered!.Select(x => x.Row).ToList();
 
@@ -2324,7 +2341,10 @@ public partial class ExcelHandler
     private static void WriteSortState(Worksheet ws, int col1, int row1, int col2, int row2,
         List<(int ColIndex, bool Descending)> sortKeys)
     {
-        ws.GetFirstChild<SortState>()?.Remove();
+        // R7-3: drop every SortState, not just the first (malformed files may
+        // carry duplicates). GetFirstChild would leave the tail behind and the
+        // newly-appended state would become the 2nd/3rd, still ambiguous.
+        foreach (var __ss in ws.Elements<SortState>().ToList()) __ss.Remove();
         var fullRef = $"{IndexToColumnName(col1)}{row1}:{IndexToColumnName(col2)}{row2}";
         var ss = new SortState { Reference = fullRef };
         foreach (var (colIdx, desc) in sortKeys)
@@ -2471,6 +2491,39 @@ public partial class ExcelHandler
                 if (changed)
                 {
                     dv.SequenceOfReferences = new ListValue<StringValue>(
+                        tokens.Select(t => new StringValue(t)));
+                }
+            }
+        }
+
+        // ---- ProtectedRanges (R7-2) ----
+        // CONSISTENCY(sort-scope): same cell-anchored scoping as dataValidations.
+        // Each <protectedRange sqref="..."> carries a space-separated list of
+        // ref tokens; only single-cell tokens inside the sort rectangle are
+        // remapped. Multi-cell ranges are left intact (partial-rect split would
+        // alter which cells are protected, same philosophy as DV/CF).
+        var pranges = ws.GetFirstChild<ProtectedRanges>();
+        if (pranges != null)
+        {
+            foreach (var pr in pranges.Elements<ProtectedRange>())
+            {
+                var sqref = pr.SequenceOfReferences;
+                if (sqref?.InnerText == null) continue;
+                var tokens = sqref.InnerText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                bool changed = false;
+                for (int i = 0; i < tokens.Length; i++)
+                {
+                    var tok = tokens[i];
+                    if (tok.Contains(':')) continue; // range token — skip
+                    if (CellInRect(tok, out var pc, out var pRow) && oldToNewRow.TryGetValue(pRow, out var newR))
+                    {
+                        tokens[i] = $"{pc.ToUpperInvariant()}{newR}";
+                        changed = true;
+                    }
+                }
+                if (changed)
+                {
+                    pr.SequenceOfReferences = new ListValue<StringValue>(
                         tokens.Select(t => new StringValue(t)));
                 }
             }
