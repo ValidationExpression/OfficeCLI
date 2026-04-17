@@ -157,16 +157,30 @@ public partial class WordHandler
     /// </summary>
     private static IEnumerable<OpenXmlElement> GetBodyElements(Body body)
     {
-        foreach (var element in body.ChildElements)
+        foreach (var element in FlattenWrappers(body.ChildElements))
+            yield return element;
+    }
+
+    // Descend into SDT (structured document tag) and customXml transparent
+    // wrappers so their wrapped paragraphs/tables participate in the body
+    // element axis. Without this, docs emitted by e.g. Pages/Google Docs
+    // that wrap entire sections in <w:customXml> produce an empty preview.
+    private static IEnumerable<OpenXmlElement> FlattenWrappers(IEnumerable<OpenXmlElement> elements)
+    {
+        foreach (var element in elements)
         {
             if (element is SdtBlock sdt)
             {
                 var content = sdt.SdtContentBlock;
                 if (content != null)
-                {
-                    foreach (var child in content.ChildElements)
+                    foreach (var child in FlattenWrappers(content.ChildElements))
                         yield return child;
-                }
+            }
+            else if (element.LocalName == "customXml"
+                && element.NamespaceUri == "http://schemas.openxmlformats.org/wordprocessingml/2006/main")
+            {
+                foreach (var child in FlattenWrappers(element.ChildElements))
+                    yield return child;
             }
             else
             {

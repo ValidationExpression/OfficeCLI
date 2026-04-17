@@ -1930,7 +1930,14 @@ internal partial class ChartSvgRenderer
         if (container == null) return null;
         var solidFill = container.Elements().FirstOrDefault(e => e.LocalName == "solidFill");
         var srgb = solidFill?.Elements().FirstOrDefault(e => e.LocalName == "srgbClr");
-        return srgb?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+        var v = srgb?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+        // Reject non-hex values — the return flows into $"#{...}" inline SVG
+        // fill/style attributes. Same XSS class as w:color / w:shd / border.
+        if (v == null) return null;
+        if (v.Length is not (3 or 6 or 8)) return null;
+        foreach (var c in v)
+            if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))) return null;
+        return v;
     }
 
     /// <summary>Extract font color from RunProperties or DefaultRunProperties (solidFill > srgbClr).</summary>

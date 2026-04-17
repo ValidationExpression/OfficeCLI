@@ -50,11 +50,11 @@ public partial class WordHandler
             var renderer = new ChartSvgRenderer
             {
                 ThemeAccentColors = ChartSvgRenderer.BuildThemeAccentColors(GetThemeColors()),
-                CatColor = info.CatFontColor != null ? $"#{info.CatFontColor}" : "#333333",
-                AxisColor = info.ValFontColor != null ? $"#{info.ValFontColor}" : "#555555",
-                ValueColor = info.ValFontColor != null ? $"#{info.ValFontColor}" : "#444444",
-                GridColor = info.GridlineColor != null ? $"#{info.GridlineColor}" : "#ddd",
-                AxisLineColor = info.AxisLineColor != null ? $"#{info.AxisLineColor}" : "#999",
+                CatColor = (info.CatFontColor != null && IsHexColor(info.CatFontColor)) ? $"#{info.CatFontColor}" : "#333333",
+                AxisColor = (info.ValFontColor != null && IsHexColor(info.ValFontColor)) ? $"#{info.ValFontColor}" : "#555555",
+                ValueColor = (info.ValFontColor != null && IsHexColor(info.ValFontColor)) ? $"#{info.ValFontColor}" : "#444444",
+                GridColor = (info.GridlineColor != null && IsHexColor(info.GridlineColor)) ? $"#{info.GridlineColor}" : "#ddd",
+                AxisLineColor = (info.AxisLineColor != null && IsHexColor(info.AxisLineColor)) ? $"#{info.AxisLineColor}" : "#999",
                 ValFontPx = info.ValFontPx,
                 CatFontPx = info.CatFontPx
             };
@@ -135,11 +135,11 @@ public partial class WordHandler
             var renderer = new ChartSvgRenderer
             {
                 ThemeAccentColors = ChartSvgRenderer.BuildThemeAccentColors(GetThemeColors()),
-                CatColor = info.CatFontColor != null ? $"#{info.CatFontColor}" : "#333333",
-                AxisColor = info.ValFontColor != null ? $"#{info.ValFontColor}" : "#555555",
-                ValueColor = info.ValFontColor != null ? $"#{info.ValFontColor}" : "#444444",
-                GridColor = info.GridlineColor != null ? $"#{info.GridlineColor}" : "#ddd",
-                AxisLineColor = info.AxisLineColor != null ? $"#{info.AxisLineColor}" : "#999",
+                CatColor = (info.CatFontColor != null && IsHexColor(info.CatFontColor)) ? $"#{info.CatFontColor}" : "#333333",
+                AxisColor = (info.ValFontColor != null && IsHexColor(info.ValFontColor)) ? $"#{info.ValFontColor}" : "#555555",
+                ValueColor = (info.ValFontColor != null && IsHexColor(info.ValFontColor)) ? $"#{info.ValFontColor}" : "#444444",
+                GridColor = (info.GridlineColor != null && IsHexColor(info.GridlineColor)) ? $"#{info.GridlineColor}" : "#ddd",
+                AxisLineColor = (info.AxisLineColor != null && IsHexColor(info.AxisLineColor)) ? $"#{info.AxisLineColor}" : "#999",
                 ValFontPx = info.ValFontPx,
                 CatFontPx = info.CatFontPx,
             };

@@ -1383,7 +1383,8 @@ public partial class WordHandler
 
         // Resolve color: try direct color, then themeColor with tint/shade
         string cssColor;
-        if (color != null && !color.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        if (color != null && !color.Equals("auto", StringComparison.OrdinalIgnoreCase)
+            && IsHexColor(color))
         {
             cssColor = $"#{color}";
         }
@@ -1544,8 +1545,22 @@ public partial class WordHandler
         return null;
     }
 
-    private static string CssSanitize(string value) =>
-        Regex.Replace(value, @"[""'\\<>&;{}]", "");
+    // Strip every character that isn't a valid CSS identifier-ish character
+    // for font names. OOXML rFonts/theme attrs are attacker-controlled, so
+    // CssSanitize not only removes the obvious breakouts (" ' ; { } < > & \)
+    // but also parens, colons, slashes, and anything non-alpha so a name like
+    // `Arial";background:url(javascript:)//` can't appear as substring inside
+    // the inline style (a CSS parser would treat it as a font name there, but
+    // downstream safety checks still grep for the substring).
+    private static string CssSanitize(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        var sb = new StringBuilder(value.Length);
+        foreach (var c in value)
+            if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' || c == '.')
+                sb.Append(c);
+        return sb.ToString();
+    }
 
     private static string JsStringLiteral(string? text)
     {

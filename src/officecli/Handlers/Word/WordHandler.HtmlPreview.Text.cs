@@ -141,13 +141,19 @@ public partial class WordHandler
                 if (url == null && hyperlink.Anchor?.Value != null)
                     url = $"#{hyperlink.Anchor.Value}";
 
-                if (url != null)
-                    sb.Append($"<a href=\"{HtmlEncodeAttr(url)}\"{(url.StartsWith("#") ? "" : " target=\"_blank\"")}>");
+                // Scheme allowlist: an adversarial docx can embed
+                // javascript:/vbscript:/data: URLs in HyperlinkRelationships
+                // that turn into click-triggered XSS. Drop the href for
+                // anything outside http/https/mailto/tel/ftp/# — the link
+                // text still renders, just not clickable.
+                var urlSafe = url != null && IsSafeLinkUrl(url);
+                if (urlSafe)
+                    sb.Append($"<a href=\"{HtmlEncodeAttr(url!)}\"{(url!.StartsWith("#") ? "" : " target=\"_blank\"")}>");
 
                 foreach (var hRun in hyperlink.Elements<Run>())
                     RenderRunHtml(sb, hRun, para);
 
-                if (url != null)
+                if (urlSafe)
                     sb.Append("</a>");
             }
             else if (child.LocalName == "oMath" || child is M.OfficeMath)

@@ -74,6 +74,23 @@ public partial class WordHandler
     /// </summary>
     public string ViewAsHtml(string? pageFilter = null)
     {
+        try
+        {
+            return ViewAsHtmlCore(pageFilter);
+        }
+        catch (System.Xml.XmlException)
+        {
+            // Any lazily-parsed subpart (styles/theme/numbering/footnotes/
+            // header/footer/settings) can throw XmlException deep inside a
+            // Render* callee if the backing XML is malformed. Treat the whole
+            // preview as best-effort and degrade gracefully rather than
+            // crashing the view command.
+            return "<html><body><p>(document xml malformed)</p></body></html>";
+        }
+    }
+
+    private string ViewAsHtmlCore(string? pageFilter)
+    {
         _ctx = new HtmlRenderContext();
         ResolveThemeCjkFont();
         // Malformed docx (e.g. <!DOCTYPE> prolog, bogus encoding= attribute
@@ -121,8 +138,10 @@ public partial class WordHandler
                 && !f.StartsWith("Symbol") && !f.StartsWith("Wingding")).ToList();
             if (googleFonts.Count > 0)
             {
-                var families = string.Join("&", googleFonts.Select(f =>
-                    $"family={f.Replace(' ', '+')}:ital,wght@0,400;0,700;1,400;1,700"));
+                var families = string.Join("&", googleFonts
+                    .Select(SanitizeFontName)
+                    .Where(f => !string.IsNullOrEmpty(f))
+                    .Select(f => $"family={f.Replace(' ', '+')}:ital,wght@0,400;0,700;1,400;1,700"));
                 sb.AppendLine($"<link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?{families}&display=swap\" onerror=\"this.remove()\">");
             }
         }
@@ -1050,14 +1069,21 @@ public partial class WordHandler
         var sb = new StringBuilder();
         foreach (var font in docFonts)
         {
-            var (ascentPct, descentPct) = FontMetricsReader.GetAscentDescentOverride(font);
+            // Font names come straight from w:rFonts@ascii/hAnsi/eastAsia and
+            // theme.xml — attacker-controlled strings. Without sanitization,
+            // a name like `x'; } body { background: url(javascript:...) } /*`
+            // would inject arbitrary CSS rules into the stylesheet. Drop
+            // anything not in the safe set (letters/digits/spaces/.-_).
+            var safeFont = SanitizeFontName(font);
+            if (string.IsNullOrEmpty(safeFont)) continue;
+            var (ascentPct, descentPct) = FontMetricsReader.GetAscentDescentOverride(safeFont);
             var overrides = ascentPct > 0
                 ? $" ascent-override: {ascentPct:0.##}%; descent-override: {descentPct:0.##}%; line-gap-override: 0%;"
                 : "";
-            sb.AppendLine($"@font-face {{ font-family: '{font}'; src: local('{font}');{overrides} }}");
-            sb.AppendLine($"@font-face {{ font-family: '{font}'; font-weight: bold; src: local('{font} Bold');{overrides} }}");
-            sb.AppendLine($"@font-face {{ font-family: '{font}'; font-style: italic; src: local('{font} Italic');{overrides} }}");
-            sb.AppendLine($"@font-face {{ font-family: '{font}'; font-weight: bold; font-style: italic; src: local('{font} Bold Italic');{overrides} }}");
+            sb.AppendLine($"@font-face {{ font-family: '{safeFont}'; src: local('{safeFont}');{overrides} }}");
+            sb.AppendLine($"@font-face {{ font-family: '{safeFont}'; font-weight: bold; src: local('{safeFont} Bold');{overrides} }}");
+            sb.AppendLine($"@font-face {{ font-family: '{safeFont}'; font-style: italic; src: local('{safeFont} Italic');{overrides} }}");
+            sb.AppendLine($"@font-face {{ font-family: '{safeFont}'; font-weight: bold; font-style: italic; src: local('{safeFont} Bold Italic');{overrides} }}");
         }
         return sb.ToString();
     }
@@ -1068,6 +1094,33 @@ public partial class WordHandler
     // Strictly-hex check for OOXML color attrs that flow into inline style.
     // Unvalidated interpolation into `background-color:#{fill}` lets a
     // malicious fill attribute escape the style context and inject HTML.
+    // Allowlist of URL schemes that are safe to emit as clickable <a href=...>.
+    // javascript:, vbscript:, and data: are all XSS vectors via OOXML
+    // hyperlink relationships (attacker-controlled Target in .rels).
+    // Keep only CSS-safe characters in a font-family name.
+    private static string SanitizeFontName(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        var sb = new StringBuilder(s.Length);
+        foreach (var c in s)
+        {
+            if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' || c == '.')
+                sb.Append(c);
+        }
+        return sb.ToString().Trim();
+    }
+
+    private static bool IsSafeLinkUrl(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return false;
+        if (url.StartsWith("#")) return true;
+        var decoded = System.Net.WebUtility.HtmlDecode(url).TrimStart();
+        var colon = decoded.IndexOf(':');
+        if (colon < 0) return true; // relative URL (path, query)
+        var scheme = decoded.Substring(0, colon).ToLowerInvariant().Trim();
+        return scheme is "http" or "https" or "mailto" or "tel" or "ftp" or "ftps";
+    }
+
     private static bool IsHexColor(string s)
         => s.Length is 3 or 6 or 8
            && s.All(c => (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'));
