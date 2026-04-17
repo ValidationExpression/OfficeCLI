@@ -41,7 +41,13 @@ public partial class WordHandler
     {
         if (_themeColors != null) return _themeColors;
 
-        var colorScheme = _doc.MainDocumentPart?.ThemePart?.Theme?.ThemeElements?.ColorScheme;
+        // A malformed theme1.xml (any XML error) throws XmlException on
+        // lazy access deep inside the first reader. Fall back to the Office
+        // default palette rather than tainting the whole preview. Same
+        // approach used for styles/footnotes below.
+        DocumentFormat.OpenXml.Drawing.ColorScheme? colorScheme = null;
+        try { colorScheme = _doc.MainDocumentPart?.ThemePart?.Theme?.ThemeElements?.ColorScheme; }
+        catch (System.Xml.XmlException) { }
         _themeColors = ThemeColorResolver.BuildColorMap(colorScheme, includePptAliases: false);
 
         // Fill in any missing standard names from the Office default theme so

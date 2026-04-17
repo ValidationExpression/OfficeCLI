@@ -150,8 +150,13 @@ public partial class WordHandler
                 if (urlSafe)
                     sb.Append($"<a href=\"{HtmlEncodeAttr(url!)}\"{(url!.StartsWith("#") ? "" : " target=\"_blank\"")}>");
 
-                foreach (var hRun in hyperlink.Elements<Run>())
-                    RenderRunHtml(sb, hRun, para);
+                // Render every nested Run (and nested Hyperlink) inside this
+                // hyperlink. Previously only direct Run children were scanned
+                // so nested hyperlinks and their content were silently dropped.
+                // HTML forbids nested <a>, so inner hyperlinks degrade to
+                // plain text (their runs still render).
+                foreach (var descendant in hyperlink.Descendants<Run>())
+                    RenderRunHtml(sb, descendant, para);
 
                 if (urlSafe)
                     sb.Append("</a>");

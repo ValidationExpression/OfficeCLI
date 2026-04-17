@@ -887,12 +887,19 @@ public partial class WordHandler
 
     private DocDef ReadDocDefaults()
     {
-        var defs = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles?.DocDefaults;
+        // Malformed styles.xml — same fallback policy as theme1.xml: the
+        // preview should still render body content using system defaults
+        // rather than rejecting the entire doc.
+        DocDefaults? defs = null;
+        Style? defaultStyle = null;
+        try
+        {
+            defs = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles?.DocDefaults;
+            defaultStyle = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
+                ?.Elements<Style>().FirstOrDefault(s => s.Default?.Value == true && s.Type?.Value == StyleValues.Paragraph);
+        }
+        catch (System.Xml.XmlException) { }
         var rPr = defs?.RunPropertiesDefault?.RunPropertiesBaseStyle;
-
-        // Find default paragraph style (Normal) for fallback
-        var defaultStyle = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
-            ?.Elements<Style>().FirstOrDefault(s => s.Default?.Value == true && s.Type?.Value == StyleValues.Paragraph);
         var defaultRPr = defaultStyle?.StyleRunProperties;
 
         // Font: docDefaults rFonts → Normal style rFonts → theme minor font → fallback
