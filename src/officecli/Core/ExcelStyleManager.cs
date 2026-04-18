@@ -179,6 +179,10 @@ internal class ExcelStyleManager
             alignProps["indent"] = indVal;
         if (styleProps.TryGetValue("shrinktofit", out var shrinkVal))
             alignProps["shrinktofit"] = shrinkVal;
+        // DEFERRED(xlsx/cell-reading-order) CE10: accept top-level `readingOrder`
+        // as shorthand for `alignment.readingOrder`.
+        if (styleProps.TryGetValue("readingorder", out var roVal))
+            alignProps["readingorder"] = roVal;
         if (alignProps.Count > 0)
         {
             alignment ??= new Alignment();
@@ -203,6 +207,11 @@ internal class ExcelStyleManager
                         break;
                     case "shrinktofit" or "shrink":
                         alignment.ShrinkToFit = IsTruthy(value);
+                        break;
+                    case "readingorder":
+                        // DEFERRED(xlsx/cell-reading-order) CE10: OOXML values
+                        // 0=context, 1=ltr, 2=rtl. Accept numeric or string forms.
+                        alignment.ReadingOrder = ParseReadingOrder(value);
                         break;
                 }
             }
@@ -368,9 +377,25 @@ internal class ExcelStyleManager
             or "wrap" or "wraptext" or "numberformat" or "format" or "halign" or "valign"
             or "rotation" or "indent" or "shrinktofit"
             or "locked" or "formulahidden"
+            || lower == "readingorder"
             || lower.StartsWith("font.")
             || lower.StartsWith("alignment.")
             || lower.StartsWith("border.");
+    }
+
+    // DEFERRED(xlsx/cell-reading-order) CE10: Parse readingOrder values.
+    // Accepts numeric (0/1/2) or string (context/contextDependent, ltr/leftToRight,
+    // rtl/rightToLeft). Returns OOXML val to stamp as readingOrder="N".
+    private static uint ParseReadingOrder(string value)
+    {
+        var v = value.Trim().ToLowerInvariant();
+        return v switch
+        {
+            "0" or "context" or "contextdependent" => 0u,
+            "1" or "ltr" or "lefttoright" => 1u,
+            "2" or "rtl" or "righttoleft" => 2u,
+            _ => throw new ArgumentException($"Invalid 'readingOrder' value: '{value}'. Expected 0/context, 1/ltr, or 2/rtl.")
+        };
     }
 
     // ==================== NumberFormat ====================
@@ -912,7 +937,8 @@ internal class ExcelStyleManager
                (a.WrapText?.Value ?? false) == (b.WrapText?.Value ?? false) &&
                (a.TextRotation?.Value ?? 0) == (b.TextRotation?.Value ?? 0) &&
                (a.Indent?.Value ?? 0) == (b.Indent?.Value ?? 0) &&
-               (a.ShrinkToFit?.Value ?? false) == (b.ShrinkToFit?.Value ?? false);
+               (a.ShrinkToFit?.Value ?? false) == (b.ShrinkToFit?.Value ?? false) &&
+               (a.ReadingOrder?.Value ?? 0) == (b.ReadingOrder?.Value ?? 0);
     }
 
     // ==================== Helpers ====================

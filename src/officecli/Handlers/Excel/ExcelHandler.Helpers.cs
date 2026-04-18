@@ -1113,6 +1113,17 @@ public partial class ExcelHandler
                             node.Format["alignment.indent"] = alignment.Indent.Value.ToString();
                         if (alignment.ShrinkToFit?.Value == true)
                             node.Format["alignment.shrinkToFit"] = true;
+                        // DEFERRED(xlsx/cell-reading-order) CE10 — canonical
+                        // readback as string form (context/ltr/rtl).
+                        if (alignment.ReadingOrder?.HasValue == true && alignment.ReadingOrder.Value != 0)
+                        {
+                            node.Format["alignment.readingOrder"] = alignment.ReadingOrder.Value switch
+                            {
+                                1u => "ltr",
+                                2u => "rtl",
+                                _ => "context"
+                            };
+                        }
                     }
 
                     // Number format readback
