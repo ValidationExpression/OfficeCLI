@@ -8,7 +8,6 @@ using DocumentFormat.OpenXml.Presentation;
 using OfficeCli.Core;
 using Drawing = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
-using M = DocumentFormat.OpenXml.Math;
 
 namespace OfficeCli.Handlers;
 
@@ -129,6 +128,70 @@ public partial class PowerPointHandler
                 picture.BlipFill.Blip = new Drawing.Blip { Embed = imgRelId };
                 if (picSvgRelId != null)
                     OfficeCli.Core.SvgImageHelper.AppendSvgExtension(picture.BlipFill.Blip, picSvgRelId);
+
+                // Crop support (mirrors Set's crop emitter — keep keys/semantics
+                // identical per CLAUDE.md Feature Implementation Checklist).
+                // CONSISTENCY(ooxml-element-order): in CT_BlipFillProperties
+                // srcRect must precede the fill-mode element (stretch/tile);
+                // PowerPoint silently ignores an out-of-order srcRect.
+                int? cropL = null, cropT = null, cropR = null, cropB = null;
+                if (properties.TryGetValue("crop", out var cropAll))
+                {
+                    var parts = cropAll.Split(',');
+                    double Parse1(string s)
+                    {
+                        var v = ParseHelpers.SafeParseDouble(s.Trim(), "crop");
+                        if (v < 0 || v > 100)
+                            throw new ArgumentException($"Invalid 'crop' value: '{s.Trim()}'. Crop percentage must be between 0 and 100.");
+                        return v;
+                    }
+                    if (parts.Length == 4)
+                    {
+                        cropL = (int)(Parse1(parts[0]) * 1000);
+                        cropT = (int)(Parse1(parts[1]) * 1000);
+                        cropR = (int)(Parse1(parts[2]) * 1000);
+                        cropB = (int)(Parse1(parts[3]) * 1000);
+                    }
+                    else if (parts.Length == 2)
+                    {
+                        var v = (int)(Parse1(parts[0]) * 1000);
+                        var h = (int)(Parse1(parts[1]) * 1000);
+                        cropT = v; cropB = v; cropL = h; cropR = h;
+                    }
+                    else if (parts.Length == 1)
+                    {
+                        var p = (int)(Parse1(parts[0]) * 1000);
+                        cropL = p; cropT = p; cropR = p; cropB = p;
+                    }
+                    else
+                    {
+                        throw new ArgumentException($"Invalid 'crop' value: '{cropAll}'. Expected 1, 2, or 4 comma-separated percentages.");
+                    }
+                }
+                int? SidePct(string k)
+                {
+                    if (!properties.TryGetValue(k, out var v)) return null;
+                    if (!double.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+                        throw new ArgumentException($"Invalid '{k}' value: '{v}'. Expected a percentage (0-100).");
+                    if (d < 0 || d > 100)
+                        throw new ArgumentException($"Invalid '{k}' value: '{v}'. Crop percentage must be between 0 and 100.");
+                    return (int)(d * 1000);
+                }
+                cropL = SidePct("cropleft") ?? cropL;
+                cropT = SidePct("croptop") ?? cropT;
+                cropR = SidePct("cropright") ?? cropR;
+                cropB = SidePct("cropbottom") ?? cropB;
+                var hasCrop = cropL is not null || cropT is not null || cropR is not null || cropB is not null;
+                var anyNonZero = (cropL ?? 0) != 0 || (cropT ?? 0) != 0 || (cropR ?? 0) != 0 || (cropB ?? 0) != 0;
+                if (hasCrop && anyNonZero)
+                {
+                    var srcRect = new Drawing.SourceRectangle();
+                    if (cropL is not null) srcRect.Left = cropL;
+                    if (cropT is not null) srcRect.Top = cropT;
+                    if (cropR is not null) srcRect.Right = cropR;
+                    if (cropB is not null) srcRect.Bottom = cropB;
+                    picture.BlipFill.AppendChild(srcRect); // stretch not yet appended
+                }
                 picture.BlipFill.AppendChild(new Drawing.Stretch(new Drawing.FillRectangle()));
 
                 picture.ShapeProperties = new ShapeProperties();

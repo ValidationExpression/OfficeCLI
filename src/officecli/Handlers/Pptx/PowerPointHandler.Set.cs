@@ -1155,8 +1155,20 @@ public partial class PowerPointHandler
                     {
                         var blipFill = pic.BlipFill;
                         if (blipFill == null) { unsupported.Add(key); break; }
-                        var srcRect = blipFill.GetFirstChild<Drawing.SourceRectangle>()
-                            ?? blipFill.AppendChild(new Drawing.SourceRectangle());
+                        var srcRect = blipFill.GetFirstChild<Drawing.SourceRectangle>();
+                        if (srcRect == null)
+                        {
+                            srcRect = new Drawing.SourceRectangle();
+                            // CONSISTENCY(ooxml-element-order): in CT_BlipFillProperties
+                            // srcRect must precede the fill-mode element (stretch/tile).
+                            // PowerPoint silently ignores out-of-order srcRect.
+                            var fillMode = (OpenXmlElement?)blipFill.GetFirstChild<Drawing.Stretch>()
+                                ?? blipFill.GetFirstChild<Drawing.Tile>();
+                            if (fillMode != null)
+                                blipFill.InsertBefore(srcRect, fillMode);
+                            else
+                                blipFill.AppendChild(srcRect);
+                        }
 
                         if (key.Equals("crop", StringComparison.OrdinalIgnoreCase))
                         {
@@ -1215,6 +1227,14 @@ public partial class PowerPointHandler
                                 case "cropbottom": srcRect.Bottom = pct; break;
                             }
                         }
+                        // Reset semantics: if all four sides are zero (or unset),
+                        // drop the srcRect entirely so the XML is clean.
+                        int L = srcRect.Left?.Value ?? 0;
+                        int T = srcRect.Top?.Value ?? 0;
+                        int R = srcRect.Right?.Value ?? 0;
+                        int B = srcRect.Bottom?.Value ?? 0;
+                        if (L == 0 && T == 0 && R == 0 && B == 0)
+                            srcRect.Remove();
                         break;
                     }
                     case "opacity":
