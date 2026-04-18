@@ -1496,7 +1496,9 @@ public partial class ExcelHandler
                         "number" or "num" => null,
                         "boolean" or "bool" => new EnumValue<CellValues>(CellValues.Boolean),
                         "date" => null, // Dates are stored as numbers; format is applied via numberformat below
-                        _ => throw new ArgumentException($"Invalid cell 'type' value '{value}'. Valid types: string, number, boolean, date.")
+                        // CONSISTENCY(cell-type-parity): accept `error`/`err` as in Add.
+                        "error" or "err" => new EnumValue<CellValues>(CellValues.Error),
+                        _ => throw new ArgumentException($"Invalid cell 'type' value '{value}'. Valid types: string, number, boolean, date, error.")
                     };
                     // Convert cell value for boolean type
                     if (value.ToLowerInvariant() is "boolean" or "bool" && cell.CellValue != null)

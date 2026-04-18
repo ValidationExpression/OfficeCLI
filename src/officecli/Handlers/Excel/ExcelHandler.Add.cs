@@ -353,7 +353,12 @@ public partial class ExcelHandler
                             // the date-shaped cell value serialization and default
                             // numberformat are applied right after this switch.
                             "date" => null,
-                            _ => throw new ArgumentException($"Invalid cell 'type' value '{cellType}'. Valid types: string, number, boolean, date, richtext.")
+                            // CE16 — accept `type=error value="#N/A"|"#DIV/0!"|...` →
+                            // emits <x:c t="e"><x:v>#N/A</x:v></x:c>. Standard
+                            // Excel error tokens: #N/A, #DIV/0!, #REF!, #NAME?,
+                            // #NULL!, #NUM!, #VALUE!, #GETTING_DATA.
+                            "error" or "err" => new EnumValue<CellValues>(CellValues.Error),
+                            _ => throw new ArgumentException($"Invalid cell 'type' value '{cellType}'. Valid types: string, number, boolean, date, error, richtext.")
                         };
                         // Convert boolean string values to OOXML-compliant 1/0
                         if (cellType.Equals("boolean", StringComparison.OrdinalIgnoreCase) || cellType.Equals("bool", StringComparison.OrdinalIgnoreCase))
