@@ -394,6 +394,18 @@ public partial class ExcelHandler
                     cell.StyleIndex = styleManager.ApplyStyle(cell, cellStyleProps);
                     _dirtyStylesheet = true;
                 }
+                else if (properties.ContainsKey("link") && !string.IsNullOrEmpty(properties["link"]))
+                {
+                    // H3: give hyperlink cells the built-in "Hyperlink" cellStyle
+                    // (blue + underline) when the user did not supply explicit
+                    // styling — so they render as proper links in real Excel.
+                    // CONSISTENCY(hyperlink-cellstyle): explicit font=/color= wins.
+                    var cellWbPart = _doc.WorkbookPart
+                        ?? throw new InvalidOperationException("Workbook not found");
+                    var styleManager = new ExcelStyleManager(cellWbPart);
+                    cell.StyleIndex = styleManager.EnsureHyperlinkCellStyle();
+                    _dirtyStylesheet = true;
+                }
 
                 DeleteCalcChainIfPresent();
                 SaveWorksheet(cellWorksheet);

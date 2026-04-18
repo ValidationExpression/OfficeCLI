@@ -1475,6 +1475,18 @@ public partial class ExcelHandler
                             if (!string.IsNullOrEmpty(setHlTip)) hl.Tooltip = setHlTip;
                             hyperlinksEl.AppendChild(hl);
                         }
+                        // H3: apply the built-in "Hyperlink" cellStyle (blue +
+                        // underline) if the cell has no user-assigned style.
+                        // CONSISTENCY(hyperlink-cellstyle): preserve an
+                        // explicit StyleIndex the user already set.
+                        if (cell.StyleIndex == null || cell.StyleIndex.Value == 0)
+                        {
+                            var wbPart = _doc.WorkbookPart
+                                ?? throw new InvalidOperationException("Workbook not found");
+                            var styleManager = new ExcelStyleManager(wbPart);
+                            cell.StyleIndex = styleManager.EnsureHyperlinkCellStyle();
+                            _dirtyStylesheet = true;
+                        }
                     }
                     break;
                 }
