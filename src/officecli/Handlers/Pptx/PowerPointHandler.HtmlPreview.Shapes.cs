@@ -848,7 +848,8 @@ public partial class PowerPointHandler
         sb.AppendLine($"      <svg width=\"100%\" height=\"100%\" preserveAspectRatio=\"none\" style=\"overflow:visible\">");
         if (!string.IsNullOrEmpty(markerDefs))
             sb.AppendLine($"        {markerDefs}");
-        sb.AppendLine($"        <line x1=\"{svgX1}\" y1=\"{svgY1}\" x2=\"{svgX2}\" y2=\"{svgY2}\" stroke=\"{safeColor}\" stroke-width=\"{lineWidth:0.##}\"{dashAttr}{markerStartAttr}{markerEndAttr}/>");
+        // CONSISTENCY(shape-stroke-unit): stroke-width in pt matches CSS border path (see R3 fix).
+        sb.AppendLine($"        <line x1=\"{svgX1}\" y1=\"{svgY1}\" x2=\"{svgX2}\" y2=\"{svgY2}\" stroke=\"{safeColor}\" stroke-width=\"{lineWidth:0.##}pt\"{dashAttr}{markerStartAttr}{markerEndAttr}/>");
         sb.AppendLine("      </svg>");
         sb.AppendLine("    </div>");
     }

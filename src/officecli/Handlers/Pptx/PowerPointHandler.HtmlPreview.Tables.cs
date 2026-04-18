@@ -229,10 +229,14 @@ public partial class PowerPointHandler
         var style = "solid";
         if (dash?.Val?.HasValue == true)
         {
+            // CONSISTENCY(dash-pattern): map mixed dash-dot patterns to "dashed" (CSS has no native dashDot).
+            // Previously fell through to "solid", which silently dropped the dash pattern.
             style = dash.Val.InnerText switch
             {
                 "dash" or "lgDash" or "sysDash" => "dashed",
                 "dot" or "sysDot" => "dotted",
+                "dashDot" or "lgDashDot" or "lgDashDotDot"
+                    or "sysDashDot" or "sysDashDotDot" => "dashed",
                 _ => "solid"
             };
         }

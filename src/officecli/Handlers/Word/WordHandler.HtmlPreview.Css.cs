@@ -1020,7 +1020,8 @@ public partial class WordHandler
 
                             if (isRadial)
                             {
-                                parts.Add($"background:radial-gradient(circle,{colors[0]},{colors[1]})");
+                                // CONSISTENCY(radial-gradient-extent): closest-side so gradient reaches shape edge (matches PPTX R2 fix).
+                                parts.Add($"background:radial-gradient(circle closest-side,{colors[0]},{colors[1]})");
                             }
                             else
                             {
