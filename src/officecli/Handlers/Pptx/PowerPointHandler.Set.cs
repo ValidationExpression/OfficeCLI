@@ -1302,10 +1302,9 @@ public partial class PowerPointHandler
                     case "background.mode":
                     case "background.alpha":
                     case "background.scale":
-                        // Consumed alongside "background" — see ReadBackgroundImageOptions.
-                        // Emit a helpful error when used without a paired "background=image:...".
-                        if (!properties.Keys.Any(k => k.Equals("background", StringComparison.OrdinalIgnoreCase)))
-                            throw new ArgumentException($"'{key}' requires a paired 'background=image:<path>' property");
+                        // If paired with "background=", consumed inside the "background" case
+                        // via ReadBackgroundImageOptions. Otherwise mutate the existing image
+                        // fill in place — done once for the whole property batch, gated below.
                         break;
                     case "transition":
                         ApplyTransition(slidePart2, value);
@@ -1400,6 +1399,7 @@ public partial class PowerPointHandler
                         break;
                 }
             }
+            MaybeMutateExistingBackgroundImage(slidePart2, properties);
             slide2.Save();
             return unsupported;
         }
@@ -1452,8 +1452,8 @@ public partial class PowerPointHandler
                     case "background.mode":
                     case "background.alpha":
                     case "background.scale":
-                        if (!properties.Keys.Any(k => k.Equals("background", StringComparison.OrdinalIgnoreCase)))
-                            throw new ArgumentException($"'{key}' requires a paired 'background=image:<path>' property");
+                        // Paired form handled via "background" case; solo form via
+                        // MaybeMutateExistingBackgroundImage after the loop.
                         break;
                     default:
                         if (unsupported.Count == 0)
@@ -1463,6 +1463,7 @@ public partial class PowerPointHandler
                         break;
                 }
             }
+            MaybeMutateExistingBackgroundImage(targetPart, properties);
             SaveBackgroundRoot(targetPart);
             return unsupported;
         }

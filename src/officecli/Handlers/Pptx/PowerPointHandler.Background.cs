@@ -29,6 +29,21 @@ public partial class PowerPointHandler
     /// </summary>
     internal record BackgroundImageOptions(string? Mode = null, int? Alpha = null, int? Scale = null);
 
+    /// <summary>
+    /// If properties contain only background.mode/alpha/scale (no "background" key),
+    /// mutate the existing image fill in place — preserves Blip.Embed so the image
+    /// part is not duplicated.
+    /// </summary>
+    internal static void MaybeMutateExistingBackgroundImage(
+        OpenXmlPart part, Dictionary<string, string> properties)
+    {
+        bool hasBackground = properties.Keys.Any(k => k.Equals("background", StringComparison.OrdinalIgnoreCase));
+        if (hasBackground) return;
+        var opts = ReadBackgroundImageOptions(properties);
+        if (opts == null) return;
+        MutateBackgroundImageFill(part, opts);
+    }
+
     internal static BackgroundImageOptions? ReadBackgroundImageOptions(Dictionary<string, string> properties)
     {
         string? Lookup(string k) => properties
@@ -167,6 +182,62 @@ public partial class PowerPointHandler
         // Schema order inside a:blipFill: a:blip → a:srcRect → {a:tile | a:stretch}.
         blipFill.Append(BuildBlipFillMode(opts));
         bgPr.Append(blipFill);
+    }
+
+    /// <summary>
+    /// Modify mode/alpha/scale of an existing image background in place without
+    /// touching the Blip.Embed rel — so the image part is not duplicated or orphaned.
+    /// Throws if the current background is not an image fill.
+    /// </summary>
+    internal static void MutateBackgroundImageFill(OpenXmlPart part, BackgroundImageOptions opts)
+    {
+        var cSld = GetCommonSlideData(part)
+            ?? throw new InvalidOperationException($"{part.GetType().Name} has no CommonSlideData");
+        var bgPr = cSld.Background?.BackgroundProperties
+            ?? throw new ArgumentException(
+                "background.mode/alpha/scale requires an existing image background; " +
+                "set background=image:<path> first");
+        var blipFill = bgPr.GetFirstChild<Drawing.BlipFill>()
+            ?? throw new ArgumentException(
+                "background.mode/alpha/scale requires an image background, but the current " +
+                "background is solid/gradient; set background=image:<path> first");
+        var blip = blipFill.GetFirstChild<Drawing.Blip>()
+            ?? throw new InvalidOperationException("BlipFill has no Blip child");
+
+        // Alpha: remove any existing alphaModFix, then re-add if specified.
+        // Null alpha means "leave existing alpha alone" — matches the partial-update semantic.
+        if (opts.Alpha is int alpha)
+        {
+            if (alpha < 0 || alpha > 100)
+                throw new ArgumentException($"background.alpha must be 0..100, got {alpha}");
+            blip.Elements<Drawing.AlphaModulationFixed>().ToList().ForEach(e => e.Remove());
+            if (alpha < 100) // 100 = opaque, default, skip emitting
+                blip.Append(new Drawing.AlphaModulationFixed { Amount = alpha * 1000 });
+        }
+
+        // Mode/scale: replace the existing tile/stretch child. If either is specified,
+        // we need current values for the other to preserve them.
+        if (opts.Mode != null || opts.Scale != null)
+        {
+            var (curMode, curScale) = ReadCurrentBlipFillMode(blipFill);
+            var merged = new BackgroundImageOptions(
+                Mode: opts.Mode ?? curMode,
+                Scale: opts.Scale ?? curScale);
+            blipFill.Elements<Drawing.Tile>().ToList().ForEach(e => e.Remove());
+            blipFill.Elements<Drawing.Stretch>().ToList().ForEach(e => e.Remove());
+            blipFill.Append(BuildBlipFillMode(merged));
+        }
+    }
+
+    private static (string Mode, int Scale) ReadCurrentBlipFillMode(Drawing.BlipFill blipFill)
+    {
+        var tile = blipFill.GetFirstChild<Drawing.Tile>();
+        if (tile == null) return ("stretch", 100);
+        var sx = tile.HorizontalRatio?.Value ?? 100000;
+        var algn = tile.Alignment?.Value;
+        if (algn == Drawing.RectangleAlignmentValues.Center && sx == 100000)
+            return ("center", 100);
+        return ("tile", (int)Math.Round(sx / 1000.0));
     }
 
     private static OpenXmlElement BuildBlipFillMode(BackgroundImageOptions? opts)

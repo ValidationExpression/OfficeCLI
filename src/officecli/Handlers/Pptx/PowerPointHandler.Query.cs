@@ -163,17 +163,37 @@ public partial class PowerPointHandler
             return masterNode;
         }
 
-        // Try slidelayout path: /slidelayout[N]
+        // Try slidelayout path: /slidelayout[N] or /slidemaster[N]/slidelayout[M]
+        var nestedLayoutMatch = Regex.Match(path, @"^/slidemaster\[(\d+)\]/slidelayout\[(\d+)\]$", RegexOptions.IgnoreCase);
         var layoutGetMatch = Regex.Match(path, @"^/slidelayout\[(\d+)\]$", RegexOptions.IgnoreCase);
-        if (layoutGetMatch.Success)
+        if (nestedLayoutMatch.Success || layoutGetMatch.Success)
         {
-            var layoutIdx = int.Parse(layoutGetMatch.Groups[1].Value);
-            var allLayouts = (_doc.PresentationPart?.SlideMasterParts ?? Enumerable.Empty<SlideMasterPart>())
-                .SelectMany(m => m.SlideLayoutParts ?? Enumerable.Empty<SlideLayoutPart>()).ToList();
-            if (layoutIdx < 1 || layoutIdx > allLayouts.Count)
-                throw new ArgumentException($"Slide layout {layoutIdx} not found (total: {allLayouts.Count})");
-            var lp = allLayouts[layoutIdx - 1];
-            var layoutNode = new DocumentNode { Path = $"/slidelayout[{layoutIdx}]", Type = "slidelayout" };
+            SlideLayoutPart lp;
+            string resolvedPath;
+            if (nestedLayoutMatch.Success)
+            {
+                var mIdx = int.Parse(nestedLayoutMatch.Groups[1].Value);
+                var lIdx = int.Parse(nestedLayoutMatch.Groups[2].Value);
+                var masters = _doc.PresentationPart?.SlideMasterParts?.ToList() ?? [];
+                if (mIdx < 1 || mIdx > masters.Count)
+                    throw new ArgumentException($"Slide master {mIdx} not found (total: {masters.Count})");
+                var layouts = masters[mIdx - 1].SlideLayoutParts?.ToList() ?? [];
+                if (lIdx < 1 || lIdx > layouts.Count)
+                    throw new ArgumentException($"Slide layout {lIdx} not found under master {mIdx} (total: {layouts.Count})");
+                lp = layouts[lIdx - 1];
+                resolvedPath = $"/slidemaster[{mIdx}]/slidelayout[{lIdx}]";
+            }
+            else
+            {
+                var layoutIdx = int.Parse(layoutGetMatch.Groups[1].Value);
+                var allLayouts = (_doc.PresentationPart?.SlideMasterParts ?? Enumerable.Empty<SlideMasterPart>())
+                    .SelectMany(m => m.SlideLayoutParts ?? Enumerable.Empty<SlideLayoutPart>()).ToList();
+                if (layoutIdx < 1 || layoutIdx > allLayouts.Count)
+                    throw new ArgumentException($"Slide layout {layoutIdx} not found (total: {allLayouts.Count})");
+                lp = allLayouts[layoutIdx - 1];
+                resolvedPath = $"/slidelayout[{layoutIdx}]";
+            }
+            var layoutNode = new DocumentNode { Path = resolvedPath, Type = "slidelayout" };
             var layoutName = lp.SlideLayout?.CommonSlideData?.Name?.Value ?? "(unnamed)";
             layoutNode.Preview = layoutName;
             layoutNode.Format["name"] = layoutName;
