@@ -637,6 +637,44 @@ public partial class WordHandler
             }
         }
 
+        // Regenerate wp:docPr/@id on cloned drawings. <wp:docPr> requires
+        // document-unique numeric ids; cloning a paragraph containing a
+        // chart/picture/shape duplicates the id and fails validation.
+        // Matching pic:cNvPr (inside DrawingML picture) carries the same id
+        // by convention (see CreateImageRun / AddChart), so keep them in sync.
+        {
+            var docPrInClone = clone is DW.DocProperties dpSelf
+                ? new[] { dpSelf }
+                : clone.Descendants<DW.DocProperties>().ToArray();
+            var nextDocPrId = NextDocPropId();
+            foreach (var dp in docPrInClone)
+            {
+                var oldId = dp.Id?.Value;
+                var newId = nextDocPrId++;
+                dp.Id = newId;
+
+                // Update matching pic:cNvPr ids within the same drawing subtree.
+                var drawingAncestor = (OpenXmlElement?)dp.Parent;
+                while (drawingAncestor != null && drawingAncestor is not Drawing)
+                    drawingAncestor = drawingAncestor.Parent;
+                var scope = (OpenXmlElement?)drawingAncestor ?? dp.Parent ?? clone;
+                if (scope != null)
+                {
+                    foreach (var picCnv in scope.Descendants<DocumentFormat.OpenXml.Drawing.Pictures.NonVisualDrawingProperties>())
+                    {
+                        if (oldId == null || picCnv.Id?.Value == oldId)
+                            picCnv.Id = newId;
+                    }
+                    foreach (var wpsCnv in scope.Descendants<DocumentFormat.OpenXml.Office2010.Word.DrawingShape.WordprocessingShape>()
+                        .SelectMany(s => s.Descendants<DocumentFormat.OpenXml.Drawing.NonVisualDrawingProperties>()))
+                    {
+                        if (oldId == null || wpsCnv.Id?.Value == oldId)
+                            wpsCnv.Id = newId;
+                    }
+                }
+            }
+        }
+
         // Handle find: anchor sentinel up front — Add() uses AddAtFindPosition
         // to split the paragraph at a text-match point, but CopyFrom has no
         // analogous split-based insertion path. The common case (e.g. cloning
