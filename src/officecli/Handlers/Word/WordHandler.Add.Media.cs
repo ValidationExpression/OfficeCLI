@@ -84,7 +84,7 @@ public partial class WordHandler
             {
                 cxPara = new Paragraph(cxRun);
                 AssignParaId(cxPara);
-                AppendToParent(parent, cxPara);
+                InsertAtIndexOrAppend(parent, cxPara, index);
             }
 
             var totalCharts = CountWordCharts(chartMainPart);
@@ -143,7 +143,7 @@ public partial class WordHandler
         {
             chartPara = new Paragraph(chartRun);
             AssignParaId(chartPara);
-            AppendToParent(parent, chartPara);
+            InsertAtIndexOrAppend(parent, chartPara, index);
         }
 
         var totalChartIdx = CountWordCharts(chartMainPart);
@@ -269,13 +269,23 @@ public partial class WordHandler
         Paragraph imgPara;
         if (parent is Paragraph existingPara)
         {
-            // When --index N is supplied, insert before the Nth existing run
-            // instead of always appending. Matches AddRun's index semantics.
-            var runCount = existingPara.Elements<Run>().Count();
-            if (index.HasValue && index.Value < runCount)
+            // Use ChildElements for index lookup to match ResolveAnchorPosition
+            // (which counts pPr). If index points at pPr, clamp forward.
+            var imgChildren = existingPara.ChildElements.ToList();
+            if (index.HasValue && index.Value < imgChildren.Count)
             {
-                var refRun = existingPara.Elements<Run>().ElementAt(index.Value);
-                existingPara.InsertBefore(imgRun, refRun);
+                var refElement = imgChildren[index.Value];
+                if (refElement is ParagraphProperties)
+                {
+                    if (index.Value + 1 < imgChildren.Count)
+                        existingPara.InsertBefore(imgRun, imgChildren[index.Value + 1]);
+                    else
+                        existingPara.AppendChild(imgRun);
+                }
+                else
+                {
+                    existingPara.InsertBefore(imgRun, refElement);
+                }
             }
             else
             {
@@ -536,11 +546,22 @@ public partial class WordHandler
         string resultPath;
         if (parent is Paragraph existingPara)
         {
-            var runCount = existingPara.Elements<Run>().Count();
-            if (index.HasValue && index.Value < runCount)
+            // Use ChildElements for index lookup to match ResolveAnchorPosition.
+            var oleChildren = existingPara.ChildElements.ToList();
+            if (index.HasValue && index.Value < oleChildren.Count)
             {
-                var refRun = existingPara.Elements<Run>().ElementAt(index.Value);
-                existingPara.InsertBefore(oleRun, refRun);
+                var refElement = oleChildren[index.Value];
+                if (refElement is ParagraphProperties)
+                {
+                    if (index.Value + 1 < oleChildren.Count)
+                        existingPara.InsertBefore(oleRun, oleChildren[index.Value + 1]);
+                    else
+                        existingPara.AppendChild(oleRun);
+                }
+                else
+                {
+                    existingPara.InsertBefore(oleRun, refElement);
+                }
             }
             else
             {

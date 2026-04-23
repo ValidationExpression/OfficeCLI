@@ -251,7 +251,14 @@ public partial class WordHandler
         else if (parent is Body bodyEl)
         {
             para = new Paragraph();
-            bodyEl.AppendChild(para);
+            // Honor index (ChildElements-based) and the Body's trailing sectPr
+            // — raw AppendChild put the paragraph AFTER sectPr, making the
+            // document schema-invalid.
+            InsertAtIndexOrAppend(bodyEl, para, index);
+            // index was consumed by the placement above; clear it so the
+            // later FormField re-threading (which also inspects index)
+            // doesn't try to rearrange runs inside the new paragraph.
+            index = null;
             var paraIdx = bodyEl.Elements<Paragraph>().ToList().IndexOf(para) + 1;
             parentPath = $"/body/{BuildParaPathSegment(para, paraIdx)}";
         }

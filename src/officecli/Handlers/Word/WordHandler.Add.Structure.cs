@@ -107,7 +107,7 @@ public partial class WordHandler
 
         sectPProps.AppendChild(sectPr);
         sectPara.AppendChild(sectPProps);
-        AppendToParent(parent, sectPara);
+        InsertAtIndexOrAppend(parent, sectPara, index);
 
         // Count section properties in document
         var secCount = body.Elements<Paragraph>()
@@ -148,12 +148,13 @@ public partial class WordHandler
         fnPart.Footnotes.AppendChild(footnote);
         fnPart.Footnotes.Save();
 
-        // Insert reference in document body
+        // Insert reference in document body at the requested index, keeping
+        // pPr as first child (InsertIntoParagraph clamps forward past pPr).
         var fnRefRun = new Run(
             new RunProperties(new RunStyle { Val = "FootnoteReference" }),
             new FootnoteReference { Id = fnId }
         );
-        fnPara.AppendChild(fnRefRun);
+        InsertIntoParagraph(fnPara, fnRefRun, index);
 
         var resultPath = $"/footnote[{fnId}]";
         return resultPath;
@@ -191,12 +192,13 @@ public partial class WordHandler
         enPart.Endnotes.AppendChild(endnote);
         enPart.Endnotes.Save();
 
-        // Insert reference in document body
+        // Insert reference in document body at the requested index, keeping
+        // pPr as first child (InsertIntoParagraph clamps forward past pPr).
         var enRefRun = new Run(
             new RunProperties(new RunStyle { Val = "EndnoteReference" }),
             new EndnoteReference { Id = enId }
         );
-        enPara.AppendChild(enRefRun);
+        InsertIntoParagraph(enPara, enRefRun, index);
 
         var resultPath = $"/endnote[{enId}]";
         return resultPath;
@@ -221,16 +223,6 @@ public partial class WordHandler
 
         var tocPara = new Paragraph();
 
-        // Optional title
-        if (!string.IsNullOrEmpty(tocTitle))
-        {
-            var titlePara = new Paragraph(
-                new ParagraphProperties(new ParagraphStyleId { Val = "TOCHeading" }),
-                new Run(new Text(tocTitle))
-            );
-            AppendToParent(parent, titlePara);
-        }
-
         // Field begin
         tocPara.AppendChild(new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }));
         // Field code
@@ -242,7 +234,20 @@ public partial class WordHandler
         // Field end
         tocPara.AppendChild(new Run(new FieldChar { FieldCharType = FieldCharValues.End }));
 
-        AppendToParent(parent, tocPara);
+        // Insert TOC paragraph at the requested position first, then — if a
+        // title was requested — insert the title paragraph immediately before
+        // it so the title precedes the TOC field in reading order. Previously
+        // the title was appended to the parent regardless of --index, ending
+        // up after the TOC.
+        InsertAtIndexOrAppend(parent, tocPara, index);
+        if (!string.IsNullOrEmpty(tocTitle))
+        {
+            var titlePara = new Paragraph(
+                new ParagraphProperties(new ParagraphStyleId { Val = "TOCHeading" }),
+                new Run(new Text(tocTitle))
+            );
+            tocPara.InsertBeforeSelf(titlePara);
+        }
 
         // Add UpdateFieldsOnOpen setting
         var settingsPart2 = _doc.MainDocumentPart!.DocumentSettingsPart

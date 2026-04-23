@@ -484,17 +484,33 @@ public partial class WordHandler
         var runText = properties.GetValueOrDefault("text", "");
         newRun.AppendChild(new Text(runText) { Space = SpaceProcessingModeValues.Preserve });
 
-        var runCount = targetPara.Elements<Run>().Count();
-        if (index.HasValue && index.Value < runCount)
+        // Use ChildElements for index lookup so ResolveAnchorPosition's
+        // childElement-indexed result lines up. If index points at
+        // ParagraphProperties, clamp forward so pPr stays first.
+        var allChildren = targetPara.ChildElements.ToList();
+        if (index.HasValue && index.Value < allChildren.Count)
         {
-            var refRun = targetPara.Elements<Run>().ElementAt(index.Value);
-            targetPara.InsertBefore(newRun, refRun);
-            resultPath = $"{parentPath}/r[{index.Value + 1}]";
+            var refElement = allChildren[index.Value];
+            if (refElement is ParagraphProperties)
+            {
+                // insert after pPr — i.e. before whatever sits at index+1, else append
+                if (index.Value + 1 < allChildren.Count)
+                    targetPara.InsertBefore(newRun, allChildren[index.Value + 1]);
+                else
+                    targetPara.AppendChild(newRun);
+            }
+            else
+            {
+                targetPara.InsertBefore(newRun, refElement);
+            }
+            var runPosIdx = targetPara.Elements<Run>().ToList().IndexOf(newRun) + 1;
+            resultPath = $"{parentPath}/r[{runPosIdx}]";
         }
         else
         {
             targetPara.AppendChild(newRun);
-            resultPath = $"{parentPath}/r[{runCount + 1}]";
+            var runCount = targetPara.Elements<Run>().Count();
+            resultPath = $"{parentPath}/r[{runCount}]";
         }
 
         // Refresh textId since paragraph content changed

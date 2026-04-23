@@ -457,10 +457,46 @@ public partial class WordHandler
 
     public string CopyFrom(string sourcePath, string targetParentPath, InsertPosition? position)
     {
-        var index = position?.Index;
         var srcParts = ParsePath(sourcePath);
         var element = NavigateToElement(srcParts)
             ?? throw new ArgumentException($"Source not found: {sourcePath}");
+
+        OpenXmlElement targetParent;
+        if (targetParentPath is "/" or "" or "/body")
+        {
+            targetParent = _doc.MainDocumentPart!.Document!.Body!;
+            targetParentPath = "/body";
+        }
+        else if (targetParentPath == "/styles")
+        {
+            var stylesPart = _doc.MainDocumentPart!.StyleDefinitionsPart
+                ?? throw new ArgumentException("Target parent not found: /styles");
+            targetParent = stylesPart.Styles
+                ?? throw new ArgumentException("Target parent not found: /styles");
+        }
+        else
+        {
+            var tgtParts = ParsePath(targetParentPath);
+            targetParent = NavigateToElement(tgtParts)
+                ?? throw new ArgumentException($"Target parent not found: {targetParentPath}");
+        }
+
+        // Reject self-clone (source == targetParent) and
+        // ancestor-into-descendant (cloning /body into /body/... would stack
+        // the body inside itself). The node-level check here complements the
+        // LocalName-based ValidateParentChild below, catching cases where the
+        // shapes would nominally match but the operation is still degenerate.
+        if (ReferenceEquals(element, targetParent))
+            throw new ArgumentException(
+                $"Cannot clone '{sourcePath}' into itself.");
+        if (targetParent.Ancestors().Contains(element))
+            throw new ArgumentException(
+                $"Cannot clone '{sourcePath}' into one of its own descendants ('{targetParentPath}').");
+
+        // Map OOXML local name to the type token ValidateParentChild expects
+        // (mirrors the dispatcher in Add.cs).
+        var typeToken = MapLocalNameToAddType(element.LocalName);
+        ValidateParentChild(targetParent, targetParentPath, typeToken);
 
         var clone = element.CloneNode(true);
 
@@ -474,15 +510,46 @@ public partial class WordHandler
             p.TextId = GenerateParaId();
         }
 
-        OpenXmlElement targetParent;
-        if (targetParentPath is "/" or "" or "/body")
-            targetParent = _doc.MainDocumentPart!.Document!.Body!;
-        else
+        // Handle find: anchor sentinel up front — Add() uses AddAtFindPosition
+        // to split the paragraph at a text-match point, but CopyFrom has no
+        // analogous split-based insertion path. The common case (e.g. cloning
+        // a paragraph before/after a find: anchor) is well served by
+        // resolving the anchor to the containing paragraph at the targetParent
+        // level and inserting the clone as that paragraph's before/after
+        // sibling.
+        if (position != null)
         {
-            var tgtParts = ParsePath(targetParentPath);
-            targetParent = NavigateToElement(tgtParts)
-                ?? throw new ArgumentException($"Target parent not found: {targetParentPath}");
+            var anchorPath = position.After ?? position.Before;
+            if (anchorPath != null && anchorPath.StartsWith("find:", StringComparison.OrdinalIgnoreCase))
+            {
+                var findValue = anchorPath["find:".Length..];
+                var (pattern, isRegex) = ParseFindPattern(findValue);
+                if (string.IsNullOrEmpty(pattern))
+                    throw new ArgumentException("find: pattern must not be empty.");
+                var hit = FindParagraphContainingText(targetParent, targetParentPath, pattern, isRegex)
+                    ?? throw new ArgumentException(
+                        $"Text '{findValue}' not found in any paragraph under {targetParentPath}.");
+                var paragraphs = targetParent.Elements<Paragraph>().ToList();
+                var anchorIdx = paragraphs.IndexOf(hit.Para);
+                if (anchorIdx < 0)
+                    throw new ArgumentException($"find: anchor resolved outside {targetParentPath}.");
+
+                if (position.After != null)
+                    hit.Para.InsertAfterSelf(clone);
+                else
+                    hit.Para.InsertBeforeSelf(clone);
+
+                _doc.MainDocumentPart?.Document?.Save();
+                var fSiblings = targetParent.ChildElements.Where(e => e.LocalName == clone.LocalName).ToList();
+                var fNewIdx = fSiblings.IndexOf(clone) + 1;
+                return $"{targetParentPath}/{clone.LocalName}[{fNewIdx}]";
+            }
         }
+
+        // Resolve --after/--before to a concrete int index in targetParent,
+        // mirroring what Add() does. Without this, CopyFrom silently ignored
+        // anchor-based positions and always appended.
+        var index = ResolveAnchorPosition(targetParent, targetParentPath, position);
 
         InsertAtPosition(targetParent, clone, index);
 
@@ -493,8 +560,39 @@ public partial class WordHandler
         return $"{targetParentPath}/{clone.LocalName}[{newIdx}]";
     }
 
+    /// <summary>
+    /// Map an OpenXML LocalName to the type token ValidateParentChild expects
+    /// (the same tokens the Add() dispatcher uses). Unknown names fall
+    /// through to the local name itself, which produces no special rejection
+    /// in ValidateParentChild — matching pre-fix behaviour for exotic types.
+    /// </summary>
+    private static string MapLocalNameToAddType(string localName) =>
+        localName.ToLowerInvariant() switch
+        {
+            "p" => "paragraph",
+            "tbl" => "table",
+            "tr" => "row",
+            "tc" => "cell",
+            "r" => "run",
+            "body" => "body",
+            "sectpr" => "section",
+            "sdt" => "sdt",
+            "hyperlink" => "hyperlink",
+            "bookmarkstart" or "bookmarkend" => "bookmark",
+            _ => localName.ToLowerInvariant()
+        };
+
     private static void InsertAtPosition(OpenXmlElement parent, OpenXmlElement element, int? index)
     {
+        // Paragraphs require pPr-aware insertion so an index 0 (which resolves
+        // to the <w:pPr> child when present) does not shove content in front
+        // of the paragraph properties.
+        if (parent is Paragraph para)
+        {
+            InsertIntoParagraph(para, element, index);
+            return;
+        }
+
         if (index.HasValue)
         {
             var children = parent.ChildElements.ToList();

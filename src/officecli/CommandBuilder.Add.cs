@@ -15,7 +15,24 @@ static partial class CommandBuilder
         var addParentPathArg = new Argument<string>("parent") { Description = "Parent DOM path (e.g. /body, /Sheet1, /slide[1])" };
         var addTypeOpt = new Option<string>("--type") { Description = "Element type to add (e.g. paragraph, run, table, sheet, row, cell, slide, shape, picture, ole, video)" };
         var addFromOpt = new Option<string?>("--from") { Description = "Copy from an existing element path (e.g. /slide[1]/shape[2])" };
-        var addIndexOpt = new Option<int?>("--index") { Description = "Insert position (0-based). If omitted, appends to end" };
+        var addIndexOpt = new Option<int?>("--index")
+        {
+            Description = "Insert position (0-based). If omitted, appends to end",
+            // Strict parser: reject trailing/leading whitespace so "3 " doesn't
+            // silently succeed while "1.5"/"abc" cleanly error. Mirrors the
+            // tight parse other invalid numeric inputs already get.
+            CustomParser = ar =>
+            {
+                if (ar.Tokens.Count == 0) return null;
+                var raw = ar.Tokens[0].Value;
+                if (raw != raw.Trim() || !int.TryParse(raw, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out var v))
+                {
+                    ar.AddError($"Cannot parse argument '{raw}' for option '--index' as expected type 'System.Nullable`1[System.Int32]'.");
+                    return null;
+                }
+                return v;
+            }
+        };
         var addAfterOpt = new Option<string?>("--after") { Description = "Insert after the element at this path (e.g. p[@paraId=1A2B3C4D])" };
         var addBeforeOpt = new Option<string?>("--before") { Description = "Insert before the element at this path" };
         var addPropsOpt = new Option<string[]>("--prop") { Description = "Property to set (key=value, e.g. --prop src=image.png --prop width=6in)", AllowMultipleArgumentsPerToken = true };

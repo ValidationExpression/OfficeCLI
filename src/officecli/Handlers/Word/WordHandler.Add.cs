@@ -26,6 +26,13 @@ public partial class WordHandler
                 ? properties
                 : new Dictionary<string, string>(properties, StringComparer.OrdinalIgnoreCase);
 
+        // Reject negative --index up front with a clean message instead of
+        // letting it fall through and surface as a raw .NET
+        // ArgumentOutOfRangeException from collection indexing. Applies to
+        // every parent (/body, /styles, /header[N], ...).
+        if (position?.Index.HasValue == true && position.Index.Value < 0)
+            throw new ArgumentException("--index must be non-negative.");
+
         var body = _doc.MainDocumentPart?.Document?.Body
             ?? throw new InvalidOperationException("Document body not found");
 
@@ -44,13 +51,38 @@ public partial class WordHandler
         }
         else
         {
-            var parts = ParsePath(parentPath);
+            List<PathSegment> parts;
+            try
+            {
+                parts = ParsePath(parentPath);
+            }
+            catch (Exception ex) when (ex is not ArgumentException and not InvalidOperationException)
+            {
+                throw new ArgumentException($"Malformed parent path '{parentPath}'. Check selector brackets and escape sequences.", ex);
+            }
             parent = NavigateToElement(parts, out var ctx)
                 ?? throw new ArgumentException($"Path not found: {parentPath}" + (ctx != null ? $". {ctx}" : ""));
         }
 
-        // Resolve --after/--before to index (handles find: prefix for text-based anchoring)
-        var index = ResolveAnchorPosition(parent, parentPath, position);
+        // Reject add operations whose parent/child combination would produce
+        // schema-invalid OOXML (e.g. /body/sectPr accepting a paragraph child,
+        // or /body/p[N] accepting a nested paragraph/table).
+        ValidateParentChild(parent, parentPath, type);
+
+        int? index;
+        try
+        {
+            // Resolve --after/--before to index (handles find: prefix for text-based anchoring)
+            index = ResolveAnchorPosition(parent, parentPath, position);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            throw new ArgumentException($"Invalid anchor for --after/--before. Check selector syntax (e.g. p[2], r[@paraId=...]).", ex);
+        }
+        catch (Exception ex) when (ex is not ArgumentException and not InvalidOperationException)
+        {
+            throw new ArgumentException($"Invalid anchor for --after/--before: {ex.GetType().Name}. Check selector syntax.", ex);
+        }
 
         // Handle find: prefix — text-based anchoring
         if (index == FindAnchorIndex && position != null)
@@ -61,7 +93,10 @@ public partial class WordHandler
             return AddAtFindPosition(parent, parentPath, type, findValue, isAfter, null, properties);
         }
 
-        var resultPath = type.ToLowerInvariant() switch
+        string resultPath;
+        try
+        {
+        resultPath = type.ToLowerInvariant() switch
         {
             "paragraph" or "p" => AddParagraph(parent, parentPath, index, properties),
             "equation" or "formula" or "math" => AddEquation(parent, parentPath, index, properties),
@@ -94,9 +129,120 @@ public partial class WordHandler
             "formfield" => AddFormField(parent, parentPath, index, properties),
             _ => AddDefault(parent, parentPath, index, properties, type),
         };
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            // Surface as a clean ArgumentException (CLI layer formats Message).
+            // Scrub the raw .NET parameter noise.
+            throw new ArgumentException($"Invalid index or anchor for add '{type}'. Check --index / --after / --before values.", ex);
+        }
 
         _doc.MainDocumentPart?.Document?.Save();
         return resultPath;
+    }
+
+    /// <summary>
+    /// Reject add operations whose parent/child combination would produce
+    /// schema-invalid OOXML. Keeps validation cheap: just the handful of
+    /// categories that corrupt documents silently.
+    /// </summary>
+    private static void ValidateParentChild(OpenXmlElement parent, string parentPath, string type)
+    {
+        var t = type?.ToLowerInvariant() ?? "";
+
+        // /body/sectPr cannot contain added children via `add` — the section
+        // element only holds layout primitives (pgSz, pgMar, cols, ...), all
+        // of which are managed via `set` on /body/sectPr instead.
+        if (parent is SectionProperties)
+        {
+            throw new ArgumentException(
+                $"Cannot add '{type}' under {parentPath}. SectionProperties only holds layout metadata; use 'officecli set' to modify pgSz, pgMar, cols, etc.");
+        }
+
+        if (parent is Paragraph)
+        {
+            // Block-level constructs can't nest inside a paragraph.
+            switch (t)
+            {
+                case "paragraph":
+                case "p":
+                case "table":
+                case "tbl":
+                case "section":
+                case "sectionbreak":
+                case "toc":
+                case "tableofcontents":
+                    throw new ArgumentException(
+                        $"Cannot add '{type}' under {parentPath}: a paragraph cannot contain another paragraph, table, section break, or TOC. Add at /body instead.");
+            }
+        }
+
+        if (parent is Body)
+        {
+            switch (t)
+            {
+                case "row":
+                case "tr":
+                    throw new ArgumentException(
+                        $"Cannot add '{type}' under {parentPath}: rows must be added under a table (/body/tbl[N]).");
+                case "cell":
+                case "tc":
+                    throw new ArgumentException(
+                        $"Cannot add '{type}' under {parentPath}: cells must be added under a row (/body/tbl[N]/tr[M]).");
+            }
+        }
+
+        // <w:tbl> only accepts tblPr, tblGrid, tr, sdt, customXml as children.
+        // Reject anything else (paragraph, table, section, toc, break, ...) so
+        // Word doesn't open a corrupted document silently.
+        if (parent is Table)
+        {
+            switch (t)
+            {
+                case "row":
+                case "tr":
+                    break;
+                default:
+                    throw new ArgumentException(
+                        $"Cannot add '{type}' under {parentPath}: tables only accept rows (/body/tbl[N]/tr). Use --type row.");
+            }
+        }
+
+        // <w:tr> only accepts trPr, tc, sdt, customXml as children.
+        if (parent is TableRow)
+        {
+            switch (t)
+            {
+                case "cell":
+                case "tc":
+                    break;
+                default:
+                    throw new ArgumentException(
+                        $"Cannot add '{type}' under {parentPath}: table rows only accept cells (/body/tbl[N]/tr[M]/tc). Use --type cell.");
+            }
+        }
+
+        // <w:sdt>/<w:sdtContent> wrappers don't accept arbitrary children as
+        // direct kids. SdtBlock/SdtRun only hold sdtPr + sdtContent; any
+        // block-level add under /body/sdt[N] belongs under
+        // /body/sdt[N]/sdtContent. Reject the degenerate path with a
+        // pointer to the content wrapper instead of silently producing
+        // <w:p> as a direct child of <w:sdt> (schema-invalid).
+        if (parent is SdtBlock || parent is SdtRun)
+        {
+            throw new ArgumentException(
+                $"Cannot add '{type}' directly under {parentPath}. SDT (content control) elements only contain <w:sdtPr> and <w:sdtContent>. Add under {parentPath}/sdtContent instead.");
+        }
+
+        // /styles is the StyleDefinitions root. It only holds <w:style>,
+        // <w:docDefaults>, and latentStyles. Every other type (paragraph,
+        // table, toc, section, sdt, pagebreak, ...) would corrupt styles.xml.
+        if (parent is Styles)
+        {
+            if (t != "style")
+                throw new ArgumentException(
+                    $"Cannot add '{type}' under /styles. /styles only holds style definitions — use --type style with --prop id=... --prop name=... (and basedOn/font/size/etc.) to add one.");
+        }
     }
 
     public (string RelId, string PartPath) AddPart(string parentPartPath, string partType, Dictionary<string, string>? properties = null)

@@ -110,6 +110,26 @@ public partial class WordHandler
     }
 
     /// <summary>
+    /// Extract the root path segment (e.g. "/body", "/header[1]", "/footer[2]",
+    /// "/styles") from a full parent path. Used by Add helpers that need to
+    /// return a path rooted at the actual OOXML part — header/footer parents
+    /// must not claim a /body-rooted path since that path won't resolve.
+    /// Defaults to "/body" when the input is empty or doesn't start with a
+    /// recognized root.
+    /// </summary>
+    private static string ExtractRootSegment(string? parentPath)
+    {
+        if (string.IsNullOrEmpty(parentPath)) return "/body";
+        var trimmed = parentPath.TrimEnd('/');
+        if (trimmed.Length == 0 || trimmed == "/") return "/body";
+        // Take the first segment (between leading '/' and the next '/').
+        var start = trimmed.StartsWith("/") ? 1 : 0;
+        var nextSlash = trimmed.IndexOf('/', start);
+        var firstSeg = nextSlash < 0 ? trimmed[start..] : trimmed[start..nextSlash];
+        return "/" + firstSeg;
+    }
+
+    /// <summary>
     /// Append a child element to parent, but if parent is Body, insert before
     /// the final SectionProperties to maintain valid OOXML structure.
     /// </summary>
@@ -125,6 +145,65 @@ public partial class WordHandler
             }
         }
         parent.AppendChild(child);
+    }
+
+    /// <summary>
+    /// Insert <paramref name="child"/> into <paramref name="parent"/> at the
+    /// ChildElements index specified by <paramref name="index"/>. If the
+    /// index is null or out of range, falls back to <see cref="AppendToParent"/>
+    /// (which respects Body's trailing sectPr).
+    /// </summary>
+    private static void InsertAtIndexOrAppend(OpenXmlElement parent, OpenXmlElement child, int? index)
+    {
+        if (index.HasValue && index.Value >= 0 && index.Value < parent.ChildElements.Count)
+        {
+            parent.InsertBefore(child, parent.ChildElements[index.Value]);
+            return;
+        }
+        AppendToParent(parent, child);
+    }
+
+    /// <summary>
+    /// Insert <paramref name="newElem"/> into <paramref name="para"/> at the
+    /// ChildElements index specified by <paramref name="index"/>, clamping
+    /// forward past any leading ParagraphProperties so pPr stays first child.
+    /// Null/out-of-range index appends.
+    /// </summary>
+    private static void InsertIntoParagraph(Paragraph para, OpenXmlElement newElem, int? index)
+    {
+        var children = para.ChildElements.ToList();
+        if (index.HasValue && index.Value >= 0 && index.Value < children.Count)
+        {
+            var refElem = children[index.Value];
+            if (refElem is ParagraphProperties)
+            {
+                if (index.Value + 1 < children.Count)
+                    para.InsertBefore(newElem, children[index.Value + 1]);
+                else
+                    para.AppendChild(newElem);
+            }
+            else
+            {
+                para.InsertBefore(newElem, refElem);
+            }
+            return;
+        }
+        para.AppendChild(newElem);
+    }
+
+    /// <summary>
+    /// Insert multiple elements consecutively into a paragraph, starting at
+    /// the ChildElements index (clamped forward past pPr). Later elements go
+    /// after earlier ones in order.
+    /// </summary>
+    private static void InsertIntoParagraph(Paragraph para, IList<OpenXmlElement> newElems, int? index)
+    {
+        if (newElems == null || newElems.Count == 0) return;
+        InsertIntoParagraph(para, newElems[0], index);
+        for (int i = 1; i < newElems.Count; i++)
+        {
+            para.InsertAfter(newElems[i], newElems[i - 1]);
+        }
     }
 
     private static double ParseFontSize(string value) =>
@@ -1061,6 +1140,12 @@ public partial class WordHandler
 
         var (pattern, isRegex) = ParseFindPattern(findValue);
 
+        // Guard: empty find pattern would produce unbounded matches and blow
+        // up downstream regex/plain-text scans. Surface a clean error instead
+        // of leaking the raw .NET exception.
+        if (string.IsNullOrEmpty(pattern))
+            throw new ArgumentException("find: pattern must not be empty. Example: --after \"find:hello\".");
+
         // Resolve to a paragraph — either the parent itself, or the first
         // descendant paragraph of a container (body/cell/sdt) whose text
         // matches the pattern.
@@ -1185,8 +1270,25 @@ public partial class WordHandler
             runIndex = 0; // insert before all runs
         }
 
-        // Delegate to normal Add with calculated run index
-        return Add(parentPath, type, InsertPosition.AtIndex(runIndex), properties);
+        // Convert run-count index → ChildElements-index so downstream handlers
+        // (which read parent.ChildElements[index]) land at the right slot. When
+        // the paragraph has a ParagraphProperties child, the ChildElements
+        // index is shifted by one; when inserting before all runs, point at
+        // the first run's ChildElements index rather than 0 (which is pPr).
+        var childElems = para.ChildElements.ToList();
+        int childIndex;
+        if (runIndex >= runs.Count)
+        {
+            childIndex = childElems.Count;
+        }
+        else
+        {
+            var targetRun = runs[runIndex];
+            childIndex = childElems.IndexOf(targetRun);
+            if (childIndex < 0) childIndex = childElems.Count;
+        }
+
+        return Add(parentPath, type, InsertPosition.AtIndex(childIndex), properties);
     }
 
     /// <summary>

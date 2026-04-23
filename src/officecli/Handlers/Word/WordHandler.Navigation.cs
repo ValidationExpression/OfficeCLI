@@ -222,15 +222,49 @@ public partial class WordHandler
     private static List<PathSegment> ParsePath(string path)
     {
         var segments = new List<PathSegment>();
+        // Reject trailing slash up front — the subsequent Trim('/') would
+        // otherwise silently absorb it and produce a path that looks valid
+        // (e.g. "/body/p[1]/" → "body/p[1]") while any callers
+        // concatenating onto the raw input would end up with doubled
+        // separators like "/body/p[1]//r[2]" in the returned path.
+        if (path.Length > 1 && path.EndsWith("/"))
+            throw new ArgumentException(
+                $"Malformed path '{path}'. Trailing '/' is not allowed.");
         var parts = path.Trim('/').Split('/');
 
         foreach (var part in parts)
         {
+            // Reject degenerate empty segments from trailing/duplicate slashes
+            // (e.g. "/body/p[1]/" or "/body//p[1]"). Without this, ParsePath
+            // would silently swallow the empty part and return a garbled
+            // navigable path.
+            if (part.Length == 0)
+                throw new ArgumentException(
+                    $"Malformed path '{path}'. Empty path segment (check for trailing or duplicate '/').");
+
             var bracketIdx = part.IndexOf('[');
             if (bracketIdx >= 0)
             {
+                // Only single-predicate form is supported. Reject malformed
+                // selectors like "p[1][2]" or "p[1]trailing" where content
+                // follows the first closing ']'. Without this the trailing
+                // junk is silently swallowed (e.g. "p[1][2]" would resolve
+                // to "p[1]") which hides typos.
+                if (!part.EndsWith("]"))
+                    throw new ArgumentException(
+                        $"Malformed path segment '{part}'. Expected 'name[index]' or 'name[@attr=value]'.");
+                var firstClose = part.IndexOf(']');
+                if (firstClose != part.Length - 1)
+                    throw new ArgumentException(
+                        $"Malformed path segment '{part}'. Multiple predicates are not supported — use a single 'name[...]' form.");
+
                 var name = Core.PathAliases.Resolve(part[..bracketIdx]);
                 var indexStr = part[(bracketIdx + 1)..^1];
+                // Reject empty predicate "p[]" which Int32.TryParse silently
+                // rejects but which then falls through as a StringIndex of "".
+                if (indexStr.Length == 0)
+                    throw new ArgumentException(
+                        $"Malformed path segment '{part}'. Empty predicate — expected 'name[index]' or 'name[@attr=value]'.");
                 if (int.TryParse(indexStr, out var idx))
                     segments.Add(new PathSegment(name, idx));
                 else

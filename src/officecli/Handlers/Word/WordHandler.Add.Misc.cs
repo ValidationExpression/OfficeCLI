@@ -58,13 +58,11 @@ public partial class WordHandler
         else
         {
             // index is a childElement-index (ResolveAnchorPosition counts pPr).
-            var cmChildren = commentPara.ChildElements.ToList();
-            if (index.HasValue && index.Value < cmChildren.Count)
+            // Use pPr-aware insert so an index pointing at ParagraphProperties
+            // clamps forward (pPr must stay first child).
+            if (index.HasValue)
             {
-                var cmAnchor = cmChildren[index.Value];
-                commentPara.InsertBefore(rangeStart, cmAnchor);
-                commentPara.InsertAfter(rangeEnd, rangeStart);
-                commentPara.InsertAfter(refRun, rangeEnd);
+                InsertIntoParagraph(commentPara, new OpenXmlElement[] { rangeStart, rangeEnd, refRun }, index);
             }
             else
             {
@@ -102,20 +100,18 @@ public partial class WordHandler
         // index is a childElement-index (ResolveAnchorPosition counts pPr).
         // When anchor-based insert is requested, bypass the text-wrapping path
         // (which finds its own position inside existing runs) and do a positional
-        // insert — the anchor wins.
-        var bkChildren = parent.ChildElements.ToList();
-        var bkAnchor = index.HasValue && index.Value < bkChildren.Count
-            ? bkChildren[index.Value]
-            : null;
+        // insert — the anchor wins. Route through the pPr-aware helper so an
+        // index pointing at ParagraphProperties clamps forward.
+        var bkPara = parent as Paragraph;
+        var hasAnchor = index.HasValue && bkPara != null
+            && index.Value >= 0 && index.Value < bkPara.ChildElements.Count;
 
         if (properties.TryGetValue("text", out var bkText))
         {
-            if (bkAnchor != null)
+            if (hasAnchor && bkPara != null)
             {
                 var bkRun = new Run(new Text(bkText) { Space = SpaceProcessingModeValues.Preserve });
-                parent.InsertBefore(bookmarkStart, bkAnchor);
-                parent.InsertAfter(bkRun, bookmarkStart);
-                parent.InsertAfter(bookmarkEnd, bkRun);
+                InsertIntoParagraph(bkPara, new OpenXmlElement[] { bookmarkStart, bkRun, bookmarkEnd }, index);
             }
             else
             {
@@ -131,10 +127,9 @@ public partial class WordHandler
                 }
             }
         }
-        else if (bkAnchor != null)
+        else if (hasAnchor && bkPara != null)
         {
-            parent.InsertBefore(bookmarkStart, bkAnchor);
-            parent.InsertAfter(bookmarkEnd, bookmarkStart);
+            InsertIntoParagraph(bkPara, new OpenXmlElement[] { bookmarkStart, bookmarkEnd }, index);
         }
         else
         {
@@ -288,10 +283,10 @@ public partial class WordHandler
         if (hasAnchor)
             hyperlink.Anchor = hlAnchor;
 
-        if (index.HasValue)
-            hlPara.InsertAt(hyperlink, index.Value);
-        else
-            hlPara.AppendChild(hyperlink);
+        // index is a childElement-index (ResolveAnchorPosition counts pPr).
+        // Route through pPr-aware helper so index 0 clamps forward past
+        // ParagraphProperties (pPr must stay first child of <w:p>).
+        InsertIntoParagraph(hlPara, hyperlink, index);
 
         var hlCount = hlPara.Elements<Hyperlink>().Count();
         var resultPath = $"{parentPath}/hyperlink[{hlCount}]";
@@ -454,17 +449,15 @@ public partial class WordHandler
         if (parent is Paragraph fieldPara)
         {
             // index is a childElement-index (ResolveAnchorPosition counts pPr too).
-            // Insert the 5 field runs starting at that position, preserving order.
-            var childList = fieldPara.ChildElements.ToList();
-            if (index.HasValue && index.Value < childList.Count)
+            // Route the 5 field runs through the pPr-aware multi-insert helper
+            // so index 0 clamps forward past ParagraphProperties and they stay
+            // in the correct consecutive order.
+            if (index.HasValue)
             {
-                var refChild = childList[index.Value];
-                fieldPara.InsertBefore(fieldRunBegin, refChild);
-                fieldPara.InsertAfter(fieldRunInstr, fieldRunBegin);
-                fieldPara.InsertAfter(fieldRunSep, fieldRunInstr);
-                fieldPara.InsertAfter(fieldRunResult, fieldRunSep);
-                fieldPara.InsertAfter(fieldRunEnd, fieldRunResult);
-                // Count how many runs precede fieldRunResult to build result path
+                InsertIntoParagraph(
+                    fieldPara,
+                    new OpenXmlElement[] { fieldRunBegin, fieldRunInstr, fieldRunSep, fieldRunResult, fieldRunEnd },
+                    index);
                 var runIdxAfterInsert = fieldPara.Elements<Run>().TakeWhile(r => r != fieldRunResult).Count();
                 resultPath = $"{parentPath}/r[{runIdxAfterInsert + 1}]";
             }
@@ -492,7 +485,7 @@ public partial class WordHandler
             fNewPara.AppendChild(fieldRunSep);
             fNewPara.AppendChild(fieldRunResult);
             fNewPara.AppendChild(fieldRunEnd);
-            AppendToParent(parent, fNewPara);
+            InsertAtIndexOrAppend(parent, fNewPara, index);
             var fIdx2 = body.Elements<Paragraph>().TakeWhile(p => p != fNewPara).Count();
             resultPath = $"/body/{BuildParaPathSegment(fNewPara, fIdx2 + 1)}";
         }
@@ -540,22 +533,33 @@ public partial class WordHandler
         if (parent is Paragraph brkPara)
         {
             // index is a childElement-index (ResolveAnchorPosition counts pPr).
-            var brkChildren = brkPara.ChildElements.ToList();
-            if (index.HasValue && index.Value < brkChildren.Count)
-                brkPara.InsertBefore(brkRun, brkChildren[index.Value]);
-            else
-                brkPara.AppendChild(brkRun);
+            // pPr-aware insert keeps pPr as the first child of <w:p>.
+            InsertIntoParagraph(brkPara, brkRun, index);
             var brkParaIdx = body.Elements<Paragraph>().TakeWhile(p => p != brkPara).Count();
             var brkRunIdx = brkPara.Elements<Run>().TakeWhile(r => r != brkRun).Count() + 1;
             resultPath = $"/body/{BuildParaPathSegment(brkPara, brkParaIdx + 1)}/r[{brkRunIdx}]";
         }
         else
         {
-            // Create a new empty paragraph with the break
+            // Create a new empty paragraph with the break and insert into the
+            // ACTUAL parent (not hard-coded body) so /header[N], /footer[N],
+            // table cells, etc. receive the new paragraph. /styles is blocked
+            // earlier by ValidateParentChild.
             var brkNewPara = new Paragraph(brkRun);
-            AppendToParent(parent, brkNewPara);
-            var brkIdx = body.Elements<Paragraph>().TakeWhile(p => p != brkNewPara).Count();
-            resultPath = $"/body/{BuildParaPathSegment(brkNewPara, brkIdx + 1)}";
+            InsertAtIndexOrAppend(parent, brkNewPara, index);
+            // Build a navigable path based on the actual container. Only /body
+            // has the @paraId indexer; other containers (headers/footers/cells)
+            // use positional paths rooted at parentPath.
+            if (parent is Body)
+            {
+                var brkIdx = body.Elements<Paragraph>().TakeWhile(p => p != brkNewPara).Count();
+                resultPath = $"/body/{BuildParaPathSegment(brkNewPara, brkIdx + 1)}";
+            }
+            else
+            {
+                var brkIdx = parent.Elements<Paragraph>().TakeWhile(p => p != brkNewPara).Count();
+                resultPath = $"{parentPath}/p[{brkIdx + 1}]";
+            }
         }
         return resultPath;
     }
@@ -662,18 +666,27 @@ public partial class WordHandler
             sdtRun.AppendChild(sdtContent);
 
             // index is a childElement-index (ResolveAnchorPosition counts pPr).
+            // pPr-aware insert so an index at pPr clamps forward to keep pPr first.
             var sdtPara = (Paragraph)parent;
-            var sdtChildren = sdtPara.ChildElements.ToList();
-            if (index.HasValue && index.Value < sdtChildren.Count)
-                sdtPara.InsertBefore(sdtRun, sdtChildren[index.Value]);
-            else
-                sdtPara.AppendChild(sdtRun);
-            // Build stable @paraId= and @sdtId= based path
+            InsertIntoParagraph(sdtPara, sdtRun, index);
+            // Build stable @paraId= and @sdtId= based path. Determine the
+            // root segment (body / header[N] / footer[N]) from the caller's
+            // parentPath so returned paths actually resolve when the parent
+            // paragraph lives in a header or footer part.
+            var inlineRoot = ExtractRootSegment(parentPath);
             var inlineParaId = ((Paragraph)parent).ParagraphId?.Value;
-            var inlineParaSegment = !string.IsNullOrEmpty(inlineParaId)
-                ? $"p[@paraId={inlineParaId}]"
-                : $"p[{body.Elements<Paragraph>().TakeWhile(p => p != parent).Count() + 1}]";
-            resultPath = $"/body/{inlineParaSegment}/sdt[@sdtId={inlineSdtIdVal}]";
+            string inlineParaSegment;
+            if (!string.IsNullOrEmpty(inlineParaId))
+            {
+                inlineParaSegment = $"p[@paraId={inlineParaId}]";
+            }
+            else
+            {
+                var parentContainer = parent.Parent;
+                var paraIdxIn = parentContainer?.Elements<Paragraph>().TakeWhile(p => p != parent).Count() ?? 0;
+                inlineParaSegment = $"p[{paraIdxIn + 1}]";
+            }
+            resultPath = $"{inlineRoot}/{inlineParaSegment}/sdt[@sdtId={inlineSdtIdVal}]";
         }
         else
         {
@@ -753,9 +766,15 @@ public partial class WordHandler
             sdtContent.AppendChild(contentPara);
             sdtBlock.AppendChild(sdtContent);
 
-            AppendToParent(parent, sdtBlock);
-            var sdtCount = body.Elements<SdtBlock>().Count();
-            resultPath = $"/body/sdt[{sdtCount}]";
+            InsertAtIndexOrAppend(parent, sdtBlock, index);
+            // Root-aware path: the sdtBlock may have been inserted into a
+            // header/footer; count SdtBlock siblings under its actual parent
+            // and prefix with the correct root segment.
+            var blockRoot = ExtractRootSegment(parentPath);
+            var blockSiblingCount = parent.Elements<SdtBlock>().TakeWhile(s => s != sdtBlock).Count() + 1;
+            resultPath = parent is Body
+                ? $"{blockRoot}/sdt[{blockSiblingCount}]"
+                : $"{parentPath}/sdt[{blockSiblingCount}]";
         }
         return resultPath;
     }
