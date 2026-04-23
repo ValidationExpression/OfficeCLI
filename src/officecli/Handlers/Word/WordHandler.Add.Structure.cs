@@ -109,10 +109,16 @@ public partial class WordHandler
         sectPara.AppendChild(sectPProps);
         InsertAtIndexOrAppend(parent, sectPara, index);
 
-        // Count section properties in document
-        var secCount = body.Elements<Paragraph>()
-            .Count(p => p.ParagraphProperties?.GetFirstChild<SectionProperties>() != null);
-        var resultPath = $"/section[{secCount}]";
+        // Return the new section's document-order position (1-based) so the
+        // path matches the NavigateToElement /section[N] resolver, which
+        // walks body paragraphs with SectionProperties in document order.
+        // Using the total count would break --before/--after (which insert
+        // mid-document): the new section may not be the last one.
+        var sectParas = body.Elements<Paragraph>()
+            .Where(p => p.ParagraphProperties?.GetFirstChild<SectionProperties>() != null)
+            .ToList();
+        var secDocOrderIdx = sectParas.FindIndex(p => ReferenceEquals(p, sectPara));
+        var resultPath = $"/section[{(secDocOrderIdx >= 0 ? secDocOrderIdx + 1 : sectParas.Count)}]";
         return resultPath;
     }
 
@@ -208,6 +214,18 @@ public partial class WordHandler
     {
         var body = _doc.MainDocumentPart?.Document?.Body
             ?? throw new InvalidOperationException("Document body not found");
+
+        // TOC fields reference body-level heading styles; adding them in a
+        // header/footer part is not meaningful and would yield an unnavigable
+        // /toc[0] return path (body TOC count is 0). Reject early with a
+        // clean error.
+        if (parent is Header || parent is Footer
+            || parent.Ancestors<Header>().Any() || parent.Ancestors<Footer>().Any())
+        {
+            throw new ArgumentException(
+                "add --type toc is not supported inside a header or footer part. " +
+                "TOC field codes reference body-level headings; insert into /body instead.");
+        }
 
         // Table of Contents field code
         var levels = properties.GetValueOrDefault("levels", "1-3");

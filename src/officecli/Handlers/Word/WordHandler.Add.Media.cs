@@ -87,8 +87,12 @@ public partial class WordHandler
                 InsertAtIndexOrAppend(parent, cxPara, index);
             }
 
-            var totalCharts = CountWordCharts(chartMainPart);
-            return $"/chart[{totalCharts}]";
+            // Return document-order position so it matches the resolver
+            // (GetAllWordCharts). CountWordCharts is insertion-order and
+            // disagrees whenever --before/--after inserts mid-document.
+            var cxAllCharts = GetAllWordCharts();
+            var cxDocOrderIdx = cxAllCharts.FindIndex(c => ReferenceEquals(c.Inline, cxInline));
+            return $"/chart[{(cxDocOrderIdx >= 0 ? cxDocOrderIdx + 1 : cxAllCharts.Count)}]";
         }
 
         // Create ChartPart and build chart
@@ -146,8 +150,10 @@ public partial class WordHandler
             InsertAtIndexOrAppend(parent, chartPara, index);
         }
 
-        var totalChartIdx = CountWordCharts(chartMainPart);
-        return $"/chart[{totalChartIdx}]";
+        // Return document-order position (matches GetAllWordCharts resolver).
+        var allCharts = GetAllWordCharts();
+        var docOrderIdx = allCharts.FindIndex(c => ReferenceEquals(c.Inline, inline));
+        return $"/chart[{(docOrderIdx >= 0 ? docOrderIdx + 1 : allCharts.Count)}]";
     }
 
     private string AddPicture(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)

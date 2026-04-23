@@ -180,7 +180,13 @@ public partial class WordHandler
         // should pass an explicit /body/p[N] anchor instead.
         if (System.Text.RegularExpressions.Regex.IsMatch(anchorPath, @"^/watermark(\[\d+\])?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
         {
-            return position.After != null ? (int?)null : 0;
+            // Honour the positional-hint contract only when a watermark
+            // actually exists in the doc. Otherwise fall through so the
+            // standard "Anchor element not found" error fires — matching
+            // /chart[1] and other absent-anchor behaviour.
+            if (FindWatermark() != null)
+                return position.After != null ? (int?)null : 0;
+            throw new ArgumentException($"Anchor element not found: {anchorPath}");
         }
 
         var segments = ParsePath(anchorPath);
