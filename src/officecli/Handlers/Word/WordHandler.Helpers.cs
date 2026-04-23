@@ -1186,7 +1186,22 @@ public partial class WordHandler
         }
         else
         {
-            return AddBlockAtSplitPoint(para, paraPath, splitPoint, type, position, properties);
+            // Block types (paragraph/table/section/toc/…) — do NOT split the
+            // target paragraph. Semantics for `find:<text>` with block adds is
+            // "insert this block as a sibling before/after the paragraph
+            // containing <text>". Splitting the paragraph would shred the
+            // user's content into two fragments and is never what's intended.
+            var container = para.Parent
+                ?? throw new InvalidOperationException("Matched paragraph has no parent container.");
+            var containerPath = paraPath.Contains('/')
+                ? paraPath[..paraPath.LastIndexOf('/')]
+                : "/body";
+            var siblings = container.Elements<OpenXmlElement>().ToList();
+            var paraIdx = siblings.IndexOf(para);
+            if (paraIdx < 0)
+                throw new InvalidOperationException("Matched paragraph not found among its parent's children.");
+            var insertIdx = isAfter ? paraIdx + 1 : paraIdx;
+            return Add(containerPath, type, InsertPosition.AtIndex(insertIdx), properties);
         }
     }
 

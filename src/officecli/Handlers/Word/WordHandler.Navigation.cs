@@ -418,6 +418,27 @@ public partial class WordHandler
             }
         }
 
+        // Top-level /formfield[N] anchor routing. `add --type formfield`
+        // returns "/formfield[N]" as the new element's identity; resolve it to
+        // the body-level paragraph containing the Nth form field's begin-run
+        // so callers can use the returned path directly as --after/--before.
+        if (first.Name.ToLowerInvariant() == "formfield" && segments.Count == 1 && first.Index.HasValue)
+        {
+            var allFf = FindFormFields();
+            var n = first.Index.Value;
+            if (n >= 1 && n <= allFf.Count)
+            {
+                var beginRun = allFf[n - 1].Field.BeginRun;
+                // Walk up to the nearest Paragraph so the anchor is a direct
+                // child of the body (matching what the user typically passes
+                // as --parent /body). If no paragraph ancestor (shouldn't
+                // happen for a valid form field), fall back to the begin run.
+                OpenXmlElement? cur = beginRun;
+                while (cur != null && cur is not Paragraph) cur = cur.Parent;
+                return cur ?? beginRun;
+            }
+        }
+
         OpenXmlElement? current = first.Name.ToLowerInvariant() switch
         {
             "body" => _doc.MainDocumentPart?.Document?.Body,
