@@ -294,6 +294,7 @@ public partial class WordHandler
             ?? _doc.MainDocumentPart.AddNewPart<StyleDefinitionsPart>();
         stylesPart.Styles ??= new Styles();
 
+        var explicitId = properties.ContainsKey("id");
         var styleId = properties.GetValueOrDefault("id", properties.GetValueOrDefault("name", "CustomStyle"));
         var styleName = properties.GetValueOrDefault("name", styleId);
         var styleType = properties.GetValueOrDefault("type", "paragraph").ToLowerInvariant() switch
@@ -304,6 +305,21 @@ public partial class WordHandler
             "paragraph" or "para" => StyleValues.Paragraph,
             _ => throw new ArgumentException($"Invalid style type: '{properties.GetValueOrDefault("type", "paragraph")}'. Valid values: paragraph, character, table, numbering.")
         };
+
+        // Enforce unique styleId — schema requires unique w:styleId per styles.xml.
+        // If the caller specified --prop id explicitly, reject; otherwise auto-suffix
+        // to keep the call idempotent-ish for scripts that only pass --prop name.
+        bool IdTaken(string candidate) => stylesPart.Styles.Elements<Style>()
+            .Any(s => string.Equals(s.StyleId?.Value, candidate, StringComparison.Ordinal));
+        if (IdTaken(styleId))
+        {
+            if (explicitId)
+                throw new ArgumentException(
+                    $"Style '{styleId}' already exists. Pick a unique --prop id or --prop name.");
+            var baseId = styleId;
+            int suffix = 2;
+            while (IdTaken(styleId)) styleId = $"{baseId}{suffix++}";
+        }
 
         // Built-in styles must not have customStyle=true, or Word won't recognize them
         // (e.g. TOC won't find Heading1 if it's marked as custom)
