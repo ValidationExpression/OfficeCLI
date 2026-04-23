@@ -1396,6 +1396,63 @@ public partial class PowerPointHandler
             return unsupported;
         }
 
+        // Try slidemaster path: /slidemaster[N] and /slidemaster[N]/slidelayout[M]
+        // Also accept bare /slidelayout[N] (global index across all masters).
+        var masterSetMatch = Regex.Match(path, @"^/slidemaster\[(\d+)\](?:/slidelayout\[(\d+)\])?$", RegexOptions.IgnoreCase);
+        var layoutSetMatch = Regex.Match(path, @"^/slidelayout\[(\d+)\]$", RegexOptions.IgnoreCase);
+        if (masterSetMatch.Success || layoutSetMatch.Success)
+        {
+            OpenXmlPart targetPart;
+            if (masterSetMatch.Success)
+            {
+                var masterIdx = int.Parse(masterSetMatch.Groups[1].Value);
+                var masters = _doc.PresentationPart?.SlideMasterParts?.ToList() ?? [];
+                if (masterIdx < 1 || masterIdx > masters.Count)
+                    throw new ArgumentException($"Slide master {masterIdx} not found (total: {masters.Count})");
+                var mp = masters[masterIdx - 1];
+                if (masterSetMatch.Groups[2].Success)
+                {
+                    var lIdx = int.Parse(masterSetMatch.Groups[2].Value);
+                    var layouts = mp.SlideLayoutParts?.ToList() ?? [];
+                    if (lIdx < 1 || lIdx > layouts.Count)
+                        throw new ArgumentException($"Slide layout {lIdx} not found under master {masterIdx} (total: {layouts.Count})");
+                    targetPart = layouts[lIdx - 1];
+                }
+                else
+                {
+                    targetPart = mp;
+                }
+            }
+            else
+            {
+                var lIdx = int.Parse(layoutSetMatch.Groups[1].Value);
+                var allLayouts = (_doc.PresentationPart?.SlideMasterParts ?? Enumerable.Empty<SlideMasterPart>())
+                    .SelectMany(m => m.SlideLayoutParts ?? Enumerable.Empty<SlideLayoutPart>()).ToList();
+                if (lIdx < 1 || lIdx > allLayouts.Count)
+                    throw new ArgumentException($"Slide layout {lIdx} not found (total: {allLayouts.Count})");
+                targetPart = allLayouts[lIdx - 1];
+            }
+
+            var unsupported = new List<string>();
+            foreach (var (key, value) in properties)
+            {
+                switch (key.ToLowerInvariant())
+                {
+                    case "background":
+                        ApplyBackground(targetPart, value);
+                        break;
+                    default:
+                        if (unsupported.Count == 0)
+                            unsupported.Add($"{key} (valid slidemaster/slidelayout props: background)");
+                        else
+                            unsupported.Add(key);
+                        break;
+                }
+            }
+            SaveBackgroundRoot(targetPart);
+            return unsupported;
+        }
+
         // Try model3d-level path: /slide[N]/model3d[M]
         var model3dSetMatch = Regex.Match(path, @"^/slide\[(\d+)\]/model3d\[(\d+)\]$");
         if (model3dSetMatch.Success)

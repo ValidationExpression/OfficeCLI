@@ -142,6 +142,7 @@ public partial class PowerPointHandler
             var shapeCount = (shapeTree?.Elements<Shape>().Count() ?? 0)
                 + (shapeTree?.Elements<Picture>().Count() ?? 0);
             masterNode.Format["shapeCount"] = shapeCount;
+            ReadBackground(mp.SlideMaster?.CommonSlideData, masterNode);
             // Add layout children
             int lIdx = 0;
             foreach (var lp in mp.SlideLayoutParts ?? Enumerable.Empty<SlideLayoutPart>())
@@ -178,6 +179,7 @@ public partial class PowerPointHandler
             layoutNode.Format["name"] = layoutName;
             if (lp.SlideLayout?.Type?.HasValue == true)
                 layoutNode.Format["type"] = lp.SlideLayout.Type.InnerText;
+            ReadBackground(lp.SlideLayout?.CommonSlideData, layoutNode);
             return layoutNode;
         }
 

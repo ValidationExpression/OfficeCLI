@@ -1,6 +1,7 @@
 // Copyright 2025 OfficeCli (officecli.ai)
 // SPDX-License-Identifier: Apache-2.0
 
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Presentation;
 using OfficeCli.Core;
@@ -13,7 +14,7 @@ public partial class PowerPointHandler
     // ==================== Slide Background ====================
 
     /// <summary>
-    /// Apply a background to a slide.
+    /// Apply a background to a slide, slide layout, or slide master.
     ///
     /// Supported values for the "background" property:
     ///   RRGGBB               solid color        e.g. "FF0000"
@@ -22,15 +23,17 @@ public partial class PowerPointHandler
     ///   C1-C2-angle          gradient + angle   e.g. "FF0000-0000FF-45"
     ///   C1-C2-C3             3-stop gradient    e.g. "FF0000-FFFF00-0000FF"
     ///   image:path           image fill         e.g. "image:/tmp/bg.png"
+    ///
+    /// Accepts SlidePart, SlideLayoutPart, or SlideMasterPart — all three parts share
+    /// the same p:bg / p:bgPr schema inside CommonSlideData.
     /// </summary>
-    private static void ApplySlideBackground(SlidePart slidePart, string value)
+    private static void ApplyBackground(OpenXmlPart part, string value)
     {
         // Normalize alternative gradient format: "LINEAR;C1;C2;angle" → "C1-C2-angle"
         value = NormalizeGradientValue(value);
 
-        var slide = GetSlide(slidePart);
-        var cSld = slide.CommonSlideData
-            ?? throw new InvalidOperationException("Slide has no CommonSlideData");
+        var cSld = GetCommonSlideData(part)
+            ?? throw new InvalidOperationException($"{part.GetType().Name} has no CommonSlideData");
 
         // Remove any existing background element
         cSld.Background?.Remove();
@@ -46,7 +49,7 @@ public partial class PowerPointHandler
         if (value.StartsWith("image:", StringComparison.OrdinalIgnoreCase))
         {
             var imagePath = value[6..].Trim();
-            ApplyBackgroundImageFill(bgPr, slidePart, imagePath);
+            ApplyBackgroundImageFill(bgPr, part, imagePath);
         }
         else if (value.StartsWith("radial:", StringComparison.OrdinalIgnoreCase) ||
                  value.StartsWith("path:", StringComparison.OrdinalIgnoreCase))
@@ -77,15 +80,54 @@ public partial class PowerPointHandler
             cSld.PrependChild(bg);
     }
 
+    // CONSISTENCY(slide-background-part): SlidePart/SlideLayoutPart/SlideMasterPart all
+    // share the p:bg schema but have no common API. Each overload keeps the call-site simple.
+    private static void ApplySlideBackground(SlidePart slidePart, string value)
+        => ApplyBackground(slidePart, value);
+
+    private static CommonSlideData? GetCommonSlideData(OpenXmlPart part) => part switch
+    {
+        SlidePart sp => sp.Slide?.CommonSlideData,
+        SlideLayoutPart lp => lp.SlideLayout?.CommonSlideData,
+        SlideMasterPart mp => mp.SlideMaster?.CommonSlideData,
+        _ => null
+    };
+
+    internal static void SaveBackgroundRoot(OpenXmlPart part)
+    {
+        switch (part)
+        {
+            case SlidePart sp: sp.Slide?.Save(); break;
+            case SlideLayoutPart lp: lp.SlideLayout?.Save(); break;
+            case SlideMasterPart mp: mp.SlideMaster?.Save(); break;
+        }
+    }
+
+    private static ImagePart AddBackgroundImagePart(OpenXmlPart part, PartTypeInfo partType) => part switch
+    {
+        SlidePart sp => sp.AddImagePart(partType),
+        SlideLayoutPart lp => lp.AddImagePart(partType),
+        SlideMasterPart mp => mp.AddImagePart(partType),
+        _ => throw new NotSupportedException($"{part.GetType().Name} does not support image parts")
+    };
+
+    private static string GetBackgroundImageRelId(OpenXmlPart part, ImagePart imagePart) => part switch
+    {
+        SlidePart sp => sp.GetIdOfPart(imagePart),
+        SlideLayoutPart lp => lp.GetIdOfPart(imagePart),
+        SlideMasterPart mp => mp.GetIdOfPart(imagePart),
+        _ => throw new NotSupportedException($"{part.GetType().Name} does not support image parts")
+    };
+
     private static void ApplyBackgroundImageFill(
-        BackgroundProperties bgPr, SlidePart slidePart, string imagePath)
+        BackgroundProperties bgPr, OpenXmlPart part, string imagePath)
     {
         var (stream, partType) = OfficeCli.Core.ImageSource.Resolve(imagePath);
         using var streamDispose = stream;
 
-        var imagePart = slidePart.AddImagePart(partType);
+        var imagePart = AddBackgroundImagePart(part, partType);
         imagePart.FeedData(stream);
-        var relId = slidePart.GetIdOfPart(imagePart);
+        var relId = GetBackgroundImageRelId(part, imagePart);
 
         var blipFill = new Drawing.BlipFill();
         blipFill.Append(new Drawing.Blip { Embed = relId });
@@ -100,8 +142,11 @@ public partial class PowerPointHandler
     /// Values mirror the input format: hex for solid, "C1-C2[-angle]" for gradient, "image" for blip.
     /// </summary>
     private static void ReadSlideBackground(Slide slide, DocumentNode node)
+        => ReadBackground(slide.CommonSlideData, node);
+
+    internal static void ReadBackground(CommonSlideData? cSld, DocumentNode node)
     {
-        var bgPr = slide.CommonSlideData?.Background?.BackgroundProperties;
+        var bgPr = cSld?.Background?.BackgroundProperties;
         if (bgPr == null) return;
 
         var solidFill = bgPr.GetFirstChild<Drawing.SolidFill>();
