@@ -1,0 +1,27 @@
+{
+  "$schema": "../_schema.json",
+  "format": "docx",
+  "element": "footnote",
+  "parent": "paragraph|body",
+  "operations": {
+    "add": true,
+    "set": true,
+    "get": true,
+    "query": true,
+    "remove": true
+  },
+  "paths": {
+    "positional": ["/footnotes/footnote[N]"]
+  },
+  "note": "Footnotes live in FootnotesPart. A FootnoteReference run is inserted at the anchor point; the note body is appended to footnotes.xml.",
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "footnote text. Required.",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop text=\"See ref [1]\""],
+      "readback": "concatenated text",
+      "enforcement": "report"
+    }
+  }
+}

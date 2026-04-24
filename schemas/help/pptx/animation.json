@@ -1,0 +1,60 @@
+{
+  "$schema": "../_schema.json",
+  "format": "pptx",
+  "element": "animation",
+  "parent": "shape",
+  "operations": {
+    "add": true,
+    "set": true,
+    "get": true,
+    "query": true,
+    "remove": true
+  },
+  "paths": {
+    "positional": ["/slide[N]/shape[M]/animation[K]"]
+  },
+  "note": "Animation attached to a specific shape. Effect name drives the timing preset; trigger controls sequencing (onClick / withPrevious / afterPrevious).",
+  "properties": {
+    "effect": {
+      "type": "enum",
+      "description": "animation preset.",
+      "values": ["fade", "fly", "wipe", "zoom", "spin", "swivel", "bounce", "grow", "float", "appear", "disappear"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop effect=fade"],
+      "readback": "effect name",
+      "enforcement": "report"
+    },
+    "trigger": {
+      "type": "enum",
+      "values": ["onClick", "withPrevious", "afterPrevious"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop trigger=onClick"],
+      "readback": "trigger mode",
+      "enforcement": "report"
+    },
+    "duration": {
+      "type": "length",
+      "description": "in seconds or ms.",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop duration=0.5"],
+      "readback": "duration descriptor",
+      "enforcement": "report"
+    },
+    "delay": {
+      "type": "length",
+      "description": "delay before starting.",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop delay=0.2"],
+      "readback": "delay descriptor",
+      "enforcement": "report"
+    },
+    "direction": {
+      "type": "string",
+      "description": "direction for directional effects (in/out/left/right/up/down).",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop direction=in"],
+      "readback": "direction",
+      "enforcement": "report"
+    }
+  }
+}

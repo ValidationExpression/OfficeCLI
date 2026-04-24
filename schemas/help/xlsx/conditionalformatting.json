@@ -1,0 +1,62 @@
+{
+  "$schema": "../_schema.json",
+  "format": "xlsx",
+  "element": "conditionalformatting",
+  "parent": "sheet",
+  "operations": {
+    "add": true,
+    "set": true,
+    "get": true,
+    "query": true,
+    "remove": true
+  },
+  "paths": {
+    "positional": ["/SheetName/cf[N]"]
+  },
+  "note": "Aliases: cf, cfextended. Type names map to xlsx CF rules (cellIs, colorScale, dataBar, iconSet, containsText, top/bottom N, etc.).",
+  "properties": {
+    "type": {
+      "type": "enum",
+      "description": "CF rule type.",
+      "values": ["cellIs", "colorScale", "dataBar", "iconSet", "containsText", "notContainsText", "beginsWith", "endsWith", "top", "topN", "topPercent", "bottom", "bottomN", "bottomPercent", "aboveAverage", "belowAverage", "duplicateValues", "uniqueValues", "containsBlanks", "containsErrors", "notContainsBlanks", "notContainsErrors", "formula", "dateOccurring", "today", "yesterday", "tomorrow", "thisWeek", "lastWeek", "nextWeek", "thisMonth", "lastMonth", "nextMonth"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop type=cellIs"],
+      "readback": "rule type",
+      "enforcement": "report"
+    },
+    "ref": {
+      "type": "string",
+      "description": "target cell range.",
+      "aliases": ["range"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop ref=A1:A10"],
+      "readback": "cell range",
+      "enforcement": "report"
+    },
+    "operator": {
+      "type": "string",
+      "description": "operator for cellIs/text rules.",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop operator=greaterThan"],
+      "readback": "operator",
+      "enforcement": "report"
+    },
+    "value": {
+      "type": "string",
+      "description": "threshold / comparison value.",
+      "aliases": ["formula1"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop value=100"],
+      "readback": "value/formula",
+      "enforcement": "report"
+    },
+    "color": {
+      "type": "color",
+      "description": "highlight color (cellIs / text rules).",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop color=#FFFF00"],
+      "readback": "#-prefixed hex",
+      "enforcement": "report"
+    }
+  }
+}

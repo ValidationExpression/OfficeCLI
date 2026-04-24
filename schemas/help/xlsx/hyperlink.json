@@ -1,0 +1,62 @@
+{
+  "$schema": "../_schema.json",
+  "format": "xlsx",
+  "element": "hyperlink",
+  "parent": "sheet|cell",
+  "operations": {
+    "add": true,
+    "set": true,
+    "get": true,
+    "query": true,
+    "remove": true
+  },
+  "paths": {
+    "positional": ["/SheetName/hyperlink[N]", "/SheetName/CellRef/hyperlink"]
+  },
+  "note": "Aliases: link. Either 'url' (external) or 'location' (internal sheet!cell) required. Display text defaults to the cell value or the URL itself.",
+  "properties": {
+    "ref": {
+      "type": "string",
+      "description": "target cell range. Aliases: cell.",
+      "aliases": ["cell"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop ref=A1"],
+      "readback": "cell reference",
+      "enforcement": "report"
+    },
+    "url": {
+      "type": "string",
+      "aliases": ["href"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop url=https://example.com"],
+      "readback": "target URL",
+      "enforcement": "report"
+    },
+    "location": {
+      "type": "string",
+      "description": "internal sheet/cell target (Sheet1!A1).",
+      "aliases": ["target"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop location=Sheet2!B5"],
+      "readback": "internal target",
+      "enforcement": "report"
+    },
+    "display": {
+      "type": "string",
+      "description": "display text. Defaults to URL or cell value.",
+      "aliases": ["text"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop display=\"Click here\""],
+      "readback": "display string",
+      "enforcement": "report"
+    },
+    "tooltip": {
+      "type": "string",
+      "description": "hover tooltip.",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop tooltip=\"Open site\""],
+      "readback": "tooltip text",
+      "enforcement": "report"
+    }
+  }
+}

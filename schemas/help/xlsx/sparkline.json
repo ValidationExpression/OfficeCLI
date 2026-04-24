@@ -1,0 +1,45 @@
+{
+  "$schema": "../_schema.json",
+  "format": "xlsx",
+  "element": "sparkline",
+  "parent": "sheet",
+  "operations": {
+    "add": true,
+    "set": true,
+    "get": true,
+    "query": true,
+    "remove": true
+  },
+  "paths": {
+    "positional": ["/SheetName/sparkline[N]"]
+  },
+  "note": "SparklineGroup stored under x14 extension list. Renders tiny inline chart in a target cell.",
+  "properties": {
+    "type": {
+      "type": "enum",
+      "values": ["line", "column", "stacked"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop type=line"],
+      "readback": "sparkline type",
+      "enforcement": "report"
+    },
+    "dataRange": {
+      "type": "string",
+      "description": "source data range (e.g. A1:A10).",
+      "aliases": ["datarange", "range", "data"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop dataRange=A1:A10"],
+      "readback": "range reference",
+      "enforcement": "report"
+    },
+    "location": {
+      "type": "string",
+      "description": "target cell address.",
+      "aliases": ["cell", "ref"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop location=B1"],
+      "readback": "target cell",
+      "enforcement": "report"
+    }
+  }
+}

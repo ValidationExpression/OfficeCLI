@@ -1,0 +1,73 @@
+{
+  "$schema": "../_schema.json",
+  "format": "xlsx",
+  "element": "validation",
+  "parent": "sheet",
+  "operations": {
+    "add": true,
+    "set": true,
+    "get": true,
+    "query": true,
+    "remove": true
+  },
+  "paths": {
+    "positional": ["/SheetName/validation[N]"]
+  },
+  "note": "Aliases: datavalidation. Target cell range via 'ref'. Type determines which of formula1/formula2 are used.",
+  "properties": {
+    "type": {
+      "type": "enum",
+      "values": ["list", "whole", "decimal", "date", "time", "textlength", "custom"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop type=list"],
+      "readback": "validation type",
+      "enforcement": "report"
+    },
+    "ref": {
+      "type": "string",
+      "description": "target cell range.",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop ref=A1:A10"],
+      "readback": "cell range",
+      "enforcement": "report"
+    },
+    "operator": {
+      "type": "enum",
+      "values": ["between", "notBetween", "equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual"],
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop operator=between"],
+      "readback": "operator name",
+      "enforcement": "report"
+    },
+    "formula1": {
+      "type": "string",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop formula1=\"Yes,No,Maybe\""],
+      "readback": "formula1 content",
+      "enforcement": "report"
+    },
+    "formula2": {
+      "type": "string",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop formula2=100"],
+      "readback": "formula2 content",
+      "enforcement": "report"
+    },
+    "prompt": {
+      "type": "string",
+      "description": "message shown when cell selected.",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop prompt=\"Enter 1-100\""],
+      "readback": "prompt text",
+      "enforcement": "report"
+    },
+    "error": {
+      "type": "string",
+      "description": "error message on invalid input.",
+      "add": true, "set": true, "get": true,
+      "examples": ["--prop error=\"Invalid value\""],
+      "readback": "error text",
+      "enforcement": "report"
+    }
+  }
+}
