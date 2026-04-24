@@ -120,30 +120,5 @@ if (args.Length == 0)
     return 0;
 }
 
-// Handle help commands (docx/xlsx/pptx) before System.CommandLine parsing
-// so that --help also shows our custom output instead of the default help
-if (OfficeCli.HelpCommands.TryHandle(args))
-    return 0;
-
-// Rewrite format-prefixed commands: "xlsx add cell <file> <path> ..." → "add <file> <path> --type cell ..."
-// This allows users to type "officecli xlsx add cell file.xlsx /Sheet1 --prop ..."
-// instead of "officecli add file.xlsx /Sheet1 --type cell --prop ..."
-if (args.Length >= 4 && args[0].ToLowerInvariant() is "docx" or "xlsx" or "pptx"
-    && args[1].ToLowerInvariant() is "add" or "set" or "get" or "query" or "remove" or "view" or "raw")
-{
-    var verb = args[1];
-    var elementType = args[2];
-    var rest = args.Skip(3).ToList();
-    // Only rewrite if the next arg looks like a file path (not a flag)
-    if (rest.Count > 0 && !rest[0].StartsWith("--"))
-    {
-        var newArgs = new List<string> { verb };
-        newArgs.AddRange(rest);
-        if (verb.Equals("add", StringComparison.OrdinalIgnoreCase))
-            newArgs.InsertRange(2, ["--type", elementType]);
-        args = newArgs.ToArray();
-    }
-}
-
 var parseResult = rootCommand.Parse(args);
 return parseResult.Invoke();

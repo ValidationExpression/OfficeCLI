@@ -19,12 +19,13 @@ static partial class CommandBuilder
         var rootCommand = new RootCommand("""
             officecli: AI-friendly CLI for Office documents (.docx, .xlsx, .pptx)
 
-            Help navigation (start from the deepest level you know):
-              officecli pptx set              All settable elements and their properties
-              officecli pptx set shape        Shape properties in detail
-              officecli pptx set shape.fill   Specific property format and examples
+            Help:
+              officecli help                          List formats
+              officecli help docx                     List docx elements
+              officecli help docx paragraph           Paragraph capability detail
+              officecli help docx paragraph --json    Structured schema for agents
 
-            Replace 'pptx' with 'docx' or 'xlsx'. Commands: view, get, query, set, add, raw.
+            Commands: view, get, query, set, add, remove, move, swap, raw, validate, batch.
             """);
         rootCommand.Add(jsonOption);
 
@@ -130,7 +131,7 @@ static partial class CommandBuilder
         rootCommand.Add(BuildCreateCommand(jsonOption));
         rootCommand.Add(BuildMergeCommand(jsonOption));
 
-        HelpCommands.Register(rootCommand);
+        rootCommand.Add(BuildHelpCommand(jsonOption));
 
         return rootCommand;
     }
