@@ -3,6 +3,7 @@
   "format": "docx",
   "element": "style",
   "parent": "styles",
+  "addParent": "/styles",
   "operations": {
     "add": true,
     "set": true,

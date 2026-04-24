@@ -29,6 +29,14 @@ public partial class WordHandler
             throw new ArgumentException(
                 $"Cannot remove container element '{path}': it is a required structural element of the document.");
 
+        // CONSISTENCY(container-remove-guard): the last <w:sectPr> inside
+        // <w:body> is required by the OOXML schema — removing it corrupts the
+        // document so that Word refuses to open it on next launch. Matches
+        // `/body/sectPr` and the indexed form `/body/sectPr[N]`.
+        if (IsProtectedSectPrPath(path))
+            throw new ArgumentException(
+                "Cannot remove '/body/sectPr': it is required by the Word document body (last section properties). Removing it corrupts the document.");
+
         // Handle /watermark removal
         if (path.Equals("/watermark", StringComparison.OrdinalIgnoreCase))
         {
@@ -335,6 +343,20 @@ public partial class WordHandler
     {
         if (string.IsNullOrEmpty(path)) return false;
         return ProtectedContainerPaths.Contains(path.TrimEnd('/'));
+    }
+
+    // CONSISTENCY(container-remove-guard): /body/sectPr needs regex match
+    // because it commonly appears with an index (e.g. /body/sectPr[1]). The
+    // flat HashSet in ProtectedContainerPaths would require enumerating every
+    // index variant, so this is kept as its own predicate.
+    private static readonly Regex ProtectedSectPrRegex = new(
+        @"^/body/sectPr(?:\[\d+\])?/?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static bool IsProtectedSectPrPath(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        return ProtectedSectPrRegex.IsMatch(path);
     }
 
     /// <summary>
