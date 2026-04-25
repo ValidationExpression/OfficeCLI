@@ -438,15 +438,16 @@ public partial class WordHandler
                 return true;
             case "leftindent" or "indentleft" or "indent":
                 var indentL = pProps.Indentation ?? (pProps.Indentation = new Indentation());
-                indentL.Left = ParseHelpers.SafeParseUint(value, "leftindent").ToString();
+                // CONSISTENCY(lenient-spacing): mirror Add — accept cm/in/pt/twips via SpacingConverter.
+                indentL.Left = SpacingConverter.ParseWordSpacing(value).ToString();
                 return true;
             case "rightindent" or "indentright":
                 var indentR = pProps.Indentation ?? (pProps.Indentation = new Indentation());
-                indentR.Right = ParseHelpers.SafeParseUint(value, "rightindent").ToString();
+                indentR.Right = SpacingConverter.ParseWordSpacing(value).ToString();
                 return true;
             case "hangingindent" or "hanging":
                 var indentH = pProps.Indentation ?? (pProps.Indentation = new Indentation());
-                indentH.Hanging = ParseHelpers.SafeParseUint(value, "hangingindent").ToString();
+                indentH.Hanging = SpacingConverter.ParseWordSpacing(value).ToString();
                 indentH.FirstLine = null;
                 return true;
             case "keepnext" or "keepwithnext":

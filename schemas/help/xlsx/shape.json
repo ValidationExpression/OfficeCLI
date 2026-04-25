@@ -17,17 +17,17 @@
   "properties": {
     "shape": {
       "type": "string",
-      "description": "shape geometry name (rect, ellipse, line, roundRect, etc.).",
-      "add": true, "set": true, "get": true,
+      "description": "shape geometry name (rect, ellipse, line, roundRect, etc.). Set after Add is not supported — recreate the shape to change geometry.",
+      "add": true, "set": false, "get": true,
       "examples": ["--prop shape=rect"],
       "readback": "geometry preset name",
       "enforcement": "report"
     },
     "anchor": {
       "type": "string",
-      "description": "cell range anchor (e.g. B2:F7). Overrides x/y/width/height.",
+      "description": "cell range anchor (e.g. B2:F7). Overrides x/y/width/height. Set-side uses x/y/width/height; anchor= is Add-only.",
       "aliases": ["ref"],
-      "add": true, "set": true, "get": true,
+      "add": true, "set": false, "get": true,
       "examples": ["--prop anchor=B2:F7"],
       "readback": "resolved anchor",
       "enforcement": "report"
