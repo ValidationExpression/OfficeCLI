@@ -324,6 +324,18 @@ internal static partial class ChartHelper
         // Top-level categories reference applies to all series
         var topCategoriesRef = ParseCategoriesRef(properties);
 
+        // R20-03: when dispBlanksAs=gap, blank source cells must be omitted
+        // from the numCache so Excel renders a gap instead of dropping to 0.
+        // ParseDataRangeForChart forwards per-series blank index lists in
+        // properties[$"series{N}._blankIndexes"] = "1,4,...".
+        bool dispBlanksGap = false;
+        if (properties.TryGetValue("dispblanksas", out var dba)
+            || properties.TryGetValue("dispBlanksAs", out dba)
+            || properties.TryGetValue("blanksas", out dba))
+        {
+            dispBlanksGap = string.Equals(dba?.Trim(), "gap", StringComparison.OrdinalIgnoreCase);
+        }
+
         for (int i = 0; i < Math.Min(extSeries!.Count, allSer.Count); i++)
         {
             var info = extSeries[i];
@@ -343,7 +355,18 @@ internal static partial class ChartHelper
                 var valEl = ser.GetFirstChild<C.Values>();
                 if (valEl != null)
                 {
-                    var numCache = BuildNumberingCacheFromLiteral(valEl.GetFirstChild<C.NumberLiteral>());
+                    HashSet<int>? blanks = null;
+                    if (dispBlanksGap
+                        && properties.TryGetValue($"series{i + 1}._blankIndexes", out var blanksStr)
+                        && !string.IsNullOrWhiteSpace(blanksStr))
+                    {
+                        blanks = new HashSet<int>(blanksStr
+                            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                            .Select(s => int.TryParse(s, out var n) ? n : -1)
+                            .Where(n => n >= 0));
+                    }
+                    var numCache = BuildNumberingCacheFromLiteral(
+                        valEl.GetFirstChild<C.NumberLiteral>(), blanks);
                     valEl.RemoveAllChildren();
                     var numRef = new C.NumberReference(new C.Formula(info.ValuesRef));
                     if (numCache != null)
@@ -1223,7 +1246,8 @@ internal static partial class ChartHelper
     /// Convert a NumberLiteral to a NumberingCache so chart viewers can display
     /// cached values without recalculating cell references.
     /// </summary>
-    private static C.NumberingCache? BuildNumberingCacheFromLiteral(C.NumberLiteral? literal)
+    private static C.NumberingCache? BuildNumberingCacheFromLiteral(
+        C.NumberLiteral? literal, HashSet<int>? skipIndexes = null)
     {
         if (literal == null) return null;
         var points = literal.Elements<C.NumericPoint>().ToList();
@@ -1235,7 +1259,13 @@ internal static partial class ChartHelper
         if (ptCount != null)
             cache.AppendChild(new C.PointCount { Val = ptCount.Val });
         foreach (var pt in points)
+        {
+            // R20-03: under dispBlanksAs=gap, omit points at blank source
+            // indexes so Excel renders a gap (line break) instead of 0.
+            if (skipIndexes != null && pt.Index?.Value is uint idx && skipIndexes.Contains((int)idx))
+                continue;
             cache.AppendChild((C.NumericPoint)pt.CloneNode(true));
+        }
         return cache;
     }
 
