@@ -35,14 +35,15 @@ static partial class CommandBuilder
         foreach (var (name, blurb) in StubBlurbs)
         {
             var cmd = new Command(name, blurb);
-            // SetAction only fires when the user invokes the stub WITHOUT
-            // --help/-h (Program.cs short-circuits the normal flow, so this
-            // path is rarely hit). When it does fire, print the verbose
-            // usage so the user isn't left with a bare blurb.
+            // SetAction is defense-in-depth: with the args-rewrite + Program.cs
+            // early-dispatch this code path is unreachable in normal use, but
+            // it ensures programmatic callers (e.g. tests parsing rootCommand
+            // directly) still get a sensible verbose-usage printout instead
+            // of silent no-op. Routes to the same source of truth as
+            // `officecli help <cmd>` and the Program.cs error path.
             cmd.SetAction(_ =>
             {
-                if (EarlyDispatchHelp.TryGetValue(name, out var lines))
-                    foreach (var line in lines) Console.WriteLine(line);
+                WriteEarlyDispatchUsage(name, Console.Out);
                 return 0;
             });
             yield return cmd;

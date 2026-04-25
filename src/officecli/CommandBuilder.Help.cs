@@ -21,6 +21,20 @@ static partial class CommandBuilder
     // Keep these usage blurbs in sync with the Console.Error.WriteLine
     // blocks in Program.cs (mcp: ~line 40, skills: ~line 87, install path:
     // documented via Installer.Run).
+    /// <summary>
+    /// Print the verbose usage block for an early-dispatch command
+    /// (mcp/skills/install) to the given writer. Single source of truth shared
+    /// between `officecli help &lt;cmd&gt;`, the integration stubs' SetAction, and
+    /// Program.cs's invalid-args error path. Returns true if the command name
+    /// was recognized.
+    /// </summary>
+    internal static bool WriteEarlyDispatchUsage(string name, TextWriter writer)
+    {
+        if (!EarlyDispatchHelp.TryGetValue(name, out var lines)) return false;
+        foreach (var line in lines) writer.WriteLine(line);
+        return true;
+    }
+
     private static readonly Dictionary<string, string[]> EarlyDispatchHelp =
         new(StringComparer.OrdinalIgnoreCase)
         {
@@ -177,11 +191,8 @@ static partial class CommandBuilder
             && verb == null
             && element == null)
         {
-            if (EarlyDispatchHelp.TryGetValue(format, out var lines))
-            {
-                foreach (var line in lines) Console.WriteLine(line);
+            if (WriteEarlyDispatchUsage(format, Console.Out))
                 return 0;
-            }
 
             if (rootCommand != null)
             {

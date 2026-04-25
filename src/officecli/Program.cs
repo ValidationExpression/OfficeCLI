@@ -52,10 +52,7 @@ if (args.Length >= 1 && args[0] == "mcp")
         OfficeCli.McpInstaller.Install(args[1]);
         return 0;
     }
-    Console.Error.WriteLine("Usage: officecli mcp              Start MCP server");
-    Console.Error.WriteLine("       officecli mcp <target>     Register (lms, claude, cursor, vscode)");
-    Console.Error.WriteLine("       officecli mcp uninstall <target>  Unregister");
-    Console.Error.WriteLine("       officecli mcp list         Show registration status");
+    OfficeCli.CommandBuilder.WriteEarlyDispatchUsage("mcp", Console.Error);
     return 1;
 }
 
@@ -99,12 +96,7 @@ if (args.Length >= 1 && args[0] == "skills")
         OfficeCli.Core.SkillInstaller.Install(args[1]);
         return 0;
     }
-    Console.Error.WriteLine("Usage:");
-    Console.Error.WriteLine("  officecli skills install                Install base SKILL.md to all detected agents");
-    Console.Error.WriteLine("  officecli skills install <skill-name>   Install a specific skill to all detected agents");
-    Console.Error.WriteLine("  officecli skills <agent>                Install base SKILL.md to a specific agent");
-    Console.Error.WriteLine($"Skills: {string.Join(", ", new[] { "pptx", "word", "excel", "morph-ppt", "pitch-deck", "academic-paper", "data-dashboard", "financial-model" })}");
-    Console.Error.WriteLine("Agents: claude, copilot, codex, cursor, windsurf, minimax, openclaw, nanobot, zeroclaw, all");
+    OfficeCli.CommandBuilder.WriteEarlyDispatchUsage("skills", Console.Error);
     return 1;
 }
 
