@@ -400,7 +400,12 @@ public static class McpServer
                         + "add type=<element> for full schema (properties, aliases, examples).";
 
                 if (!OfficeCli.Help.SchemaHelpLoader.IsKnownFormat(format))
-                    return $"Unknown format '{format}'. Supported: docx, xlsx, pptx.";
+                {
+                    // CONSISTENCY(mcp-error): truncate user-supplied value in error messages to prevent
+                    // response amplification (caller echoes arbitrary-length input back unchanged).
+                    var displayFormat = format.Length > 64 ? format[..64] + "…" : format;
+                    return $"Unknown format '{displayFormat}'. Supported: docx, xlsx, pptx.";
+                }
 
                 var canonical = OfficeCli.Help.SchemaHelpLoader.NormalizeFormat(format);
                 var sb = new StringBuilder(McpHelpStrategy);

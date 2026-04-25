@@ -39,15 +39,24 @@ internal static class Installer
         var skilledTools = SkillInstaller.Install(target);
 
         // Install MCP for tools that didn't get a skill
-        InstallMcpFallback(skilledTools, target);
+        var mcpInstalled = InstallMcpFallback(skilledTools, target);
 
+        // Exit 1 when a specific target was named but neither skills nor MCP
+        // recognized it. 'all' (default) is always success because there's
+        // nothing to mistype. Without this, `officecli install bogus` would
+        // exit 0 after only printing 'Unknown target' to stderr — automation
+        // can't distinguish a typo from a successful install.
+        var isAll = target.Equals("all", StringComparison.OrdinalIgnoreCase);
+        if (!isAll && skilledTools.Count == 0 && !mcpInstalled)
+            return 1;
         return 0;
     }
 
-    private static void InstallMcpFallback(HashSet<string> skilledTools, string target)
+    private static bool InstallMcpFallback(HashSet<string> skilledTools, string target)
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var isAll = target.Equals("all", StringComparison.OrdinalIgnoreCase);
+        var anyInstalled = false;
 
         foreach (var (mcpTarget, detectDir, skillAliases) in McpTargets)
         {
@@ -61,8 +70,13 @@ internal static class Installer
 
             // Only install if the tool's directory exists
             if (Directory.Exists(Path.Combine(home, detectDir)))
-                McpInstaller.Install(mcpTarget);
+            {
+                if (McpInstaller.Install(mcpTarget))
+                    anyInstalled = true;
+            }
         }
+
+        return anyInstalled;
     }
 
     internal static bool InstallBinary(bool quiet = false)

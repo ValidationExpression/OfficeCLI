@@ -212,7 +212,7 @@ internal static class SkillInstaller
             return;
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        SafeCreateDirectory(Path.GetDirectoryName(targetPath)!);
         File.WriteAllText(targetPath, content);
         Console.WriteLine($"  {displayName}: officecli installed ({targetPath})");
     }
@@ -245,12 +245,14 @@ internal static class SkillInstaller
             {
                 found = true;
                 var skillDir = Path.Combine(Home, tool.SkillDir, folder);
-                var updated = InstallSkillFiles(tool.DisplayName, skillDir, files);
-                if (updated)
-                {
-                    foreach (var alias in tool.Aliases)
-                        installed.Add(alias);
-                }
+                InstallSkillFiles(tool.DisplayName, skillDir, files);
+                // CONSISTENCY(install-success): always add aliases when the
+                // agent dir exists, matching InstallBaseToAll's semantics.
+                // The exit code derived from this set is "install succeeded
+                // for these agents", not "files were rewritten" — idempotent
+                // re-install of an up-to-date skill must still report success.
+                foreach (var alias in tool.Aliases)
+                    installed.Add(alias);
             }
         }
 
@@ -276,7 +278,7 @@ internal static class SkillInstaller
             if (File.Exists(targetPath) && File.ReadAllText(targetPath) == rewritten)
                 continue;
 
-            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            SafeCreateDirectory(Path.GetDirectoryName(targetPath)!);
             File.WriteAllText(targetPath, rewritten);
             anyUpdated = true;
         }
@@ -380,11 +382,39 @@ internal static class SkillInstaller
             if (File.Exists(targetPath) && File.ReadAllText(targetPath) == rewritten)
                 continue;
 
-            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            SafeCreateDirectory(Path.GetDirectoryName(targetPath)!);
             File.WriteAllText(targetPath, rewritten);
             n++;
         }
         return n;
+    }
+
+    // ─── Directory helpers ───────────────────────────────────
+
+    /// <summary>
+    /// Like Directory.CreateDirectory but handles dangling symlinks:
+    /// if the path exists as a symlink whose target is missing, remove it first.
+    /// </summary>
+    private static void SafeCreateDirectory(string dir)
+    {
+        // CONSISTENCY(skill-install): dangling symlink guard — Directory.CreateDirectory
+        // throws IOException when a path component is a dangling symlink; detect and remove it.
+        // Use FileAttributes.ReparsePoint to detect symlinks regardless of whether target exists.
+        if (!Directory.Exists(dir))
+        {
+            try
+            {
+                var attrs = File.GetAttributes(dir);
+                if (attrs.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    // Dangling symlink (or symlink to non-dir) — remove it so CreateDirectory can proceed
+                    File.Delete(dir);
+                }
+            }
+            catch (FileNotFoundException) { /* fine, doesn't exist at all */ }
+            catch (DirectoryNotFoundException) { /* fine, parent also missing */ }
+        }
+        Directory.CreateDirectory(dir);
     }
 
     // ─── Embedded resource helpers ───────────────────────────

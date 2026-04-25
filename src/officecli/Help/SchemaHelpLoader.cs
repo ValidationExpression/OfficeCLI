@@ -125,8 +125,11 @@ internal static class SchemaHelpLoader
         // 2. Unknown element — suggest closest match.
         var best = ClosestMatch(element, elements);
         var suggestion = best != null ? $"\nDid you mean: {best}?" : "";
+        // CONSISTENCY(mcp-error): truncate user-supplied value in error messages to prevent
+        // response amplification (caller echoes arbitrary-length input back unchanged).
+        var displayElement = element.Length > 64 ? element[..64] + "…" : element;
         throw new InvalidOperationException(
-            $"error: unknown element '{element}' for format '{canonical}'.{suggestion}\n" +
+            $"error: unknown element '{displayElement}' for format '{canonical}'.{suggestion}\n" +
             $"Use: officecli help {canonical}");
     }
 
