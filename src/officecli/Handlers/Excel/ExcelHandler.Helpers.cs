@@ -2074,6 +2074,12 @@ public partial class ExcelHandler
                 node.Format["flip"] = "v";
         }
 
+        // Geometry preset (rect, ellipse, etc.) — schema documents `shape`
+        // as the canonical key (with `preset` as input alias on Add side).
+        var presetGeom = shape.ShapeProperties?.GetFirstChild<Drawing.PresetGeometry>();
+        if (presetGeom?.Preset?.HasValue == true)
+            node.Format["shape"] = presetGeom.Preset.InnerText;
+
         // Fill
         var spPr = shape.ShapeProperties;
         if (spPr?.GetFirstChild<Drawing.NoFill>() != null)

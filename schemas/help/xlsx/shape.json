@@ -25,11 +25,11 @@
     },
     "anchor": {
       "type": "string",
-      "description": "cell range anchor (e.g. B2:F7). Overrides x/y/width/height. Set-side uses x/y/width/height; anchor= is Add-only.",
+      "description": "cell range anchor (e.g. B2:F7) — Add-only. Set uses x/y/width/height; Get readback emits x/y/width/height instead of cell-range form (round-trip via numeric position, not anchor string).",
       "aliases": ["ref"],
-      "add": true, "set": false, "get": true,
+      "add": true, "set": false, "get": false,
       "examples": ["--prop anchor=B2:F7"],
-      "readback": "resolved anchor",
+      "readback": "x/y/width/height (numeric)",
       "enforcement": "report"
     },
     "text": {
