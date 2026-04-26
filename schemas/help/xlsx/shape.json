@@ -94,6 +94,7 @@
       "type": "string",
       "description": "shape width in cell units (or unit-qualified size like 6cm).",
       "add": true, "set": true, "get": false,
+      "aliases": ["w"],
       "examples": ["--prop width=4", "--prop width=6cm"],
       "enforcement": "report"
     },
@@ -101,6 +102,7 @@
       "type": "string",
       "description": "shape height in cell units (or unit-qualified size).",
       "add": true, "set": true, "get": false,
+      "aliases": ["h"],
       "examples": ["--prop height=3"],
       "enforcement": "report"
     },
