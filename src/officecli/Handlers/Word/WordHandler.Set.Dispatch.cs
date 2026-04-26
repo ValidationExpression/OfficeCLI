@@ -552,10 +552,18 @@ public partial class WordHandler
             // also extends Style's previously narrow rPr surface (was 7
             // props) to cover the full ~23-prop ApplyRunFormatting set,
             // matching what Word actually accepts in style/rPr.
-            if (ApplyRunFormatting(
+            // CONSISTENCY(no-empty-container): probe ApplyRunFormatting on a
+            // detached rPr first; only attach a real StyleRunProperties to
+            // the style if the probe accepts the key. Pre-creating rPr
+            // unconditionally pollutes pure-pPr styles with a stray <w:rPr/>.
+            var rPrProbeFmt = new StyleRunProperties();
+            if (ApplyRunFormatting(rPrProbeFmt, key, value))
+            {
+                ApplyRunFormatting(
                     style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties()),
-                    key, value))
+                    key, value);
                 continue;
+            }
 
             switch (key.ToLowerInvariant())
             {
@@ -599,8 +607,9 @@ public partial class WordHandler
                 case "contextualspacing" or "contextualSpacing":
                 {
                     var pPrCs = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                    // Replace, don't ??= — see BUG-LT3 in WordHandler.Set.cs.
                     if (IsTruthy(value))
-                        pPrCs.ContextualSpacing ??= new ContextualSpacing();
+                        pPrCs.ContextualSpacing = new ContextualSpacing();
                     else
                         pPrCs.ContextualSpacing = null;
                     break;
@@ -615,15 +624,28 @@ public partial class WordHandler
                 default:
                 {
                     // Long-tail OOXML fallback — symmetric with the Get-side
-                    // FillUnknownChildProps. Try rPr first (run-level toggles
-                    // like w:rtl, w:cs), then pPr (paragraph-level toggles
-                    // like w:kinsoku, w:snapToGrid). SDK schema validation
-                    // happens inside TryCreateTypedChild; non-OOXML keys
-                    // still fall through to `unsupported`.
-                    var rPrGen = style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties());
-                    if (Core.GenericXmlQuery.TryCreateTypedChild(rPrGen, key, value)) break;
-                    var pPrGen = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
-                    if (Core.GenericXmlQuery.TryCreateTypedChild(pPrGen, key, value)) break;
+                    // FillUnknownChildProps. Probe pPr first (most paragraph-
+                    // level toggles like w:kinsoku, w:snapToGrid, w:wordWrap,
+                    // w:autoSpaceDE/DN, w:bidi, w:outlineLvl live there), then
+                    // rPr (run-level: w:rtl, w:cs, w:specVanish). Schema-
+                    // aware AddChild inside TryCreateTypedChild rejects
+                    // mismatched containers, so a wrong probe just returns
+                    // false. Use detached probes to avoid creating orphan
+                    // empty rPr/pPr on misses.
+                    var pPrProbe = new StyleParagraphProperties();
+                    if (Core.GenericXmlQuery.TryCreateTypedChild(pPrProbe, key, value))
+                    {
+                        var pPrReal = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                        Core.GenericXmlQuery.TryCreateTypedChild(pPrReal, key, value);
+                        break;
+                    }
+                    var rPrProbe = new StyleRunProperties();
+                    if (Core.GenericXmlQuery.TryCreateTypedChild(rPrProbe, key, value))
+                    {
+                        var rPrReal = style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties());
+                        Core.GenericXmlQuery.TryCreateTypedChild(rPrReal, key, value);
+                        break;
+                    }
                     unsupported.Add(key);
                     break;
                 }
