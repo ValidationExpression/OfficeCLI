@@ -1211,6 +1211,14 @@ public partial class ExcelHandler
                 }
                 catch { }
             }
+            // Internal-location hyperlinks (Sheet1!B5, defined names) have no
+            // external relationship — they live entirely in the @location
+            // attribute. Without this branch, internal links round-trip
+            // through Set but vanish from Get.
+            else if (hyperlink?.Location?.Value is { Length: > 0 } loc)
+            {
+                node.Format["link"] = loc;
+            }
 
             // Border readback from stylesheet
             var styleIndex = cell.StyleIndex?.Value ?? 0;
