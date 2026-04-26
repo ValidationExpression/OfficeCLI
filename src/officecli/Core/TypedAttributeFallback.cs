@@ -55,14 +55,36 @@ internal static class TypedAttributeFallback
 
     /// <summary>
     /// Attempt to set <paramref name="value"/> as an attribute on a child
-    /// element of <paramref name="parent"/>, where the dotted key has the
-    /// form <c>"elementName.attrName"</c>. Returns false (and does not
-    /// modify <paramref name="parent"/>) if the dotted shape is not
-    /// recognized by the SDK as a valid element/attr pair under this
-    /// parent.
+    /// element of <paramref name="parent"/>. Two dotted shapes are accepted:
+    ///
+    /// <para>
+    /// <b>Single level</b> (<c>"elementName.attrName"</c>) — sets an attribute
+    /// on a direct child. Creates the child if absent. This is the original
+    /// element-attr fallback (e.g. <c>ind.firstLine=240</c> →
+    /// <c>&lt;w:ind w:firstLine="240"/&gt;</c>).
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Nested, navigate-existing-only</b>
+    /// (<c>"e1.e2[…].attrName"</c> with 2+ dots) — walks into existing
+    /// nested children and sets the attr on the leaf. Each intermediate
+    /// segment must already exist as a child element; if any segment is
+    /// missing, the helper returns <c>false</c> so curated coverage can
+    /// take over (creating nested OOXML structures from scratch is
+    /// intentionally out of scope here — schema-order and container
+    /// disambiguation make that a curated concern).
+    /// </para>
+    ///
+    /// Returns <c>false</c> in either mode if the SDK does not recognize
+    /// the leaf element/attr pair as a typed schema member.
     /// </summary>
     public static bool TrySet(OpenXmlElement parent, string dottedKey, string value)
     {
+        var dotCount = 0;
+        foreach (var c in dottedKey) if (c == '.') dotCount++;
+        if (dotCount == 0) return false;
+        if (dotCount >= 2) return TrySetNestedExisting(parent, dottedKey, value);
+
         var dot = dottedKey.IndexOf('.');
         if (dot <= 0 || dot == dottedKey.Length - 1) return false;
         var elementLocal = dottedKey[..dot];
@@ -137,6 +159,79 @@ internal static class TypedAttributeFallback
         }
 
         parent.AppendChild(sample);
+        return true;
+    }
+
+    /// <summary>
+    /// Tier 3 fallback: navigate an existing nested OOXML tree and set an
+    /// attribute on the leaf element. Each intermediate dotted segment must
+    /// already exist as a child element; the helper never creates nested
+    /// structure from scratch. The leaf attr is validated via SDK round-trip
+    /// (same trick as the single-level path) so typos like
+    /// <c>pBdr.top.notAnAttr</c> are rejected.
+    /// </summary>
+    private static bool TrySetNestedExisting(OpenXmlElement parent, string dottedKey, string value)
+    {
+        var segments = dottedKey.Split('.');
+        if (segments.Length < 3) return false;
+        var attrLocal = segments[^1];
+        if (string.IsNullOrEmpty(attrLocal)) return false;
+
+        // Apply user-facing alias to the first segment only — same vocabulary
+        // as the single-level path (font→rFonts, shading→shd, …).
+        if (ElementAliases.TryGetValue(segments[0], out var aliased0))
+            segments[0] = aliased0;
+
+        // Navigate from parent through each element segment; require every
+        // intermediate to exist already. Missing structure → return false so
+        // curated coverage handles the create case.
+        OpenXmlElement cur = parent;
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            var seg = segments[i];
+            if (string.IsNullOrEmpty(seg)) return false;
+            var next = cur.ChildElements.FirstOrDefault(e =>
+                e.LocalName.Equals(seg, StringComparison.OrdinalIgnoreCase));
+            if (next == null) return false;
+            cur = next;
+        }
+
+        // Validate the (leaf-element, attr) pair via SDK round-trip on a
+        // fresh sibling of `cur`. The leaf's local name and namespace come
+        // from the actual existing element so we don't misjudge a custom
+        // namespace or alias-renamed element.
+        var nsUri  = cur.NamespaceUri;
+        var prefix = cur.Prefix;
+        if (string.IsNullOrEmpty(nsUri) || string.IsNullOrEmpty(prefix))
+        {
+            nsUri  = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            prefix = "w";
+        }
+        var leafContainer = cur.Parent;
+        if (leafContainer == null) return false;
+
+        OpenXmlElement sample;
+        try
+        {
+            var escapedVal = System.Security.SecurityElement.Escape(value);
+            var temp = leafContainer.CloneNode(false);
+            temp.InnerXml = $"<{prefix}:{cur.LocalName} xmlns:{prefix}=\"{nsUri}\" {prefix}:{attrLocal}=\"{escapedVal}\"/>";
+            var first = temp.FirstChild?.CloneNode(true);
+            if (first is null or OpenXmlUnknownElement) return false;
+            sample = (OpenXmlElement)first;
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (sample.ExtendedAttributes.Any()) return false;
+        if (!sample.GetAttributes().Any()) return false;
+
+        // Apply: set the attr (using SDK-normalized form via the parsed
+        // sample) on the existing leaf.
+        foreach (var a in sample.GetAttributes())
+            cur.SetAttribute(a);
         return true;
     }
 }
