@@ -1193,12 +1193,19 @@ internal static partial class ChartHelper
 
                 case "dispblanksas" or "blanksas":
                 {
+                    // CONSISTENCY(strict-enum): reject unknown enum values
+                    // instead of silently falling back to Gap. Mirrors R10
+                    // conditionalformatting / R11 cf-Add behavior so user
+                    // typos surface immediately rather than producing a
+                    // silently-different chart.
                     chart.RemoveAllChildren<C.DisplayBlanksAs>();
                     var dbVal = value.ToLowerInvariant() switch
                     {
                         "zero" => C.DisplayBlanksAsValues.Zero,
                         "span" or "connect" => C.DisplayBlanksAsValues.Span,
-                        _ => C.DisplayBlanksAsValues.Gap
+                        "gap" => C.DisplayBlanksAsValues.Gap,
+                        _ => throw new ArgumentException(
+                            $"Invalid dispBlanksAs value '{value}'. Allowed: gap, zero, span (alias: connect).")
                     };
                     chart.AppendChild(new C.DisplayBlanksAs { Val = dbVal });
                     break;
