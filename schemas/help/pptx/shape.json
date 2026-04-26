@@ -141,6 +141,24 @@
       "readback": "degrees as number (e.g. 45)",
       "enforcement": "strict"
     },
+    "flipH": {
+      "type": "bool",
+      "aliases": ["flipHorizontal"],
+      "description": "Flip the shape horizontally.",
+      "add": true,
+      "set": true,
+      "examples": ["--prop flipH=true"],
+      "enforcement": "report"
+    },
+    "flipV": {
+      "type": "bool",
+      "aliases": ["flipVertical"],
+      "description": "Flip the shape vertically.",
+      "add": true,
+      "set": true,
+      "examples": ["--prop flipV=true"],
+      "enforcement": "report"
+    },
     "opacity": {
       "type": "number",
       "description": "fill opacity (0.0 - 1.0). Requires a fill to attach to — opacity alone (without fill/gradient/pattern) has no effect in OOXML.",
