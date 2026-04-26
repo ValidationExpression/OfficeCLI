@@ -897,6 +897,13 @@ public class ResidentServer : IDisposable
         var depth = req.GetIntArg("depth") ?? 1;
         var node = _handler.Get(path, depth);
 
+        // CONSISTENCY(get-not-found-exit): mirror CommandBuilder.GetQuery.cs.
+        // Some handler Get paths surface "not found" via Type="error" rather
+        // than throwing. Convert to a real exception so the resident response
+        // exits non-zero, matching the direct-mode CLI behavior.
+        if (string.Equals(node.Type, "error", StringComparison.Ordinal))
+            throw new ArgumentException(node.Text ?? $"Path not found: {path}");
+
         // CONSISTENCY(get-save): mirror CommandBuilder.GetQuery.cs lines 59-74.
         // Direct-mode `get --save` extracts the binary payload backing an
         // ole/picture/media node to disk. Resident mode must honour the same

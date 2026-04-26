@@ -51,6 +51,21 @@ static partial class CommandBuilder
             using var handler = DocumentHandlerFactory.Open(file.FullName);
             var node = handler.Get(path, depth);
 
+            // CONSISTENCY(get-not-found-exit): some handler Get paths surface
+            // "not found" via DocumentNode { Type = "error" } instead of
+            // throwing (e.g. /numbering/abstractNum[@id=999]). Other paths
+            // throw and exit 1 via SafeRun. Treat error-type nodes the same
+            // way so callers get a consistent non-zero exit on missing paths.
+            if (string.Equals(node.Type, "error", StringComparison.Ordinal))
+            {
+                var err = node.Text ?? $"Path not found: {path}";
+                if (json)
+                    Console.WriteLine(OutputFormatter.WrapEnvelopeError(err));
+                else
+                    Console.Error.WriteLine($"Error: {err}");
+                return 1;
+            }
+
             // --save <path>: extract the binary payload backing an OLE /
             // picture / media node to disk. The handler exposes this via
             // TryExtractBinary which looks up the node's relId and copies
