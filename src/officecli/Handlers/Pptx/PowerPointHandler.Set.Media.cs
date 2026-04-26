@@ -120,6 +120,14 @@ public partial class PowerPointHandler
                 }
                 case "crop" or "cropleft" or "cropright" or "croptop" or "cropbottom":
                 {
+                    // R10: tolerate trailing '%' on crop values — error message
+                    // already says "Expected a percentage (0-100)", so the % literal
+                    // is the natural input form.
+                    static string StripPct(string s)
+                    {
+                        var t = s.Trim();
+                        return t.EndsWith("%", StringComparison.Ordinal) ? t[..^1].Trim() : t;
+                    }
                     var blipFill = pic.BlipFill;
                     if (blipFill == null) { unsupported.Add(key); break; }
                     var srcRect = blipFill.GetFirstChild<Drawing.SourceRectangle>();
@@ -146,7 +154,7 @@ public partial class PowerPointHandler
                             var cropVals = new double[4];
                             for (int ci = 0; ci < 4; ci++)
                             {
-                                cropVals[ci] = ParseHelpers.SafeParseDouble(parts[ci].Trim(), "crop");
+                                cropVals[ci] = ParseHelpers.SafeParseDouble(StripPct(parts[ci]), "crop");
                                 if (cropVals[ci] < 0 || cropVals[ci] > 100)
                                     throw new ArgumentException($"Invalid 'crop' value: '{parts[ci].Trim()}'. Crop percentage must be between 0 and 100.");
                             }
@@ -158,8 +166,8 @@ public partial class PowerPointHandler
                         else if (parts.Length == 2)
                         {
                             // 2-value: vertical,horizontal (top/bottom, left/right)
-                            var vCrop = ParseHelpers.SafeParseDouble(parts[0].Trim(), "crop");
-                            var hCrop = ParseHelpers.SafeParseDouble(parts[1].Trim(), "crop");
+                            var vCrop = ParseHelpers.SafeParseDouble(StripPct(parts[0]), "crop");
+                            var hCrop = ParseHelpers.SafeParseDouble(StripPct(parts[1]), "crop");
                             if (vCrop < 0 || vCrop > 100 || hCrop < 0 || hCrop > 100)
                                 throw new ArgumentException($"Invalid 'crop' value: '{value}'. Crop percentages must be between 0 and 100.");
                             srcRect.Top = (int)(vCrop * 1000); srcRect.Bottom = (int)(vCrop * 1000);
@@ -167,7 +175,7 @@ public partial class PowerPointHandler
                         }
                         else if (parts.Length == 1)
                         {
-                            if (!double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var cropVal))
+                            if (!double.TryParse(StripPct(value), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var cropVal))
                                 throw new ArgumentException($"Invalid 'crop' value: '{value}'. Expected a percentage (e.g. 10 = 10% from each edge).");
                             if (cropVal < 0 || cropVal > 100)
                                 throw new ArgumentException($"Invalid 'crop' value: '{value}'. Crop percentage must be between 0 and 100.");
@@ -181,7 +189,7 @@ public partial class PowerPointHandler
                     }
                     else
                     {
-                        if (!double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var cropSingle))
+                        if (!double.TryParse(StripPct(value), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var cropSingle))
                             throw new ArgumentException($"Invalid '{key}' value: '{value}'. Expected a percentage (0-100).");
                         if (cropSingle < 0 || cropSingle > 100)
                             throw new ArgumentException($"Invalid '{key}' value: '{value}'. Crop percentage must be between 0 and 100.");
