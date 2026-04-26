@@ -491,6 +491,30 @@ public partial class WordHandler
                 continue;
             }
 
+            // 1b) Generic dotted "element.attr=value" fallback (e.g.
+            //     ind.firstLine=240, shd.fill=FF0000, font.eastAsia=…).
+            //     SDK-validated round-trip rejects unknown element/attr
+            //     combinations. Runs ahead of the single-val fallback so
+            //     dotted keys never accidentally get coerced into a
+            //     <w:foo w:val="bar.baz"/> element.
+            if (key.Contains('.'))
+            {
+                var pPrAttrProbe = new StyleParagraphProperties();
+                if (Core.TypedAttributeFallback.TrySet(pPrAttrProbe, key, value))
+                {
+                    var pPrReal = newStyle.StyleParagraphProperties ?? EnsureStyleParagraphProperties(newStyle);
+                    Core.TypedAttributeFallback.TrySet(pPrReal, key, value);
+                    continue;
+                }
+                var rPrAttrProbe = new StyleRunProperties();
+                if (Core.TypedAttributeFallback.TrySet(rPrAttrProbe, key, value))
+                {
+                    var rPrReal = newStyle.StyleRunProperties ?? newStyle.AppendChild(new StyleRunProperties());
+                    Core.TypedAttributeFallback.TrySet(rPrReal, key, value);
+                    continue;
+                }
+            }
+
             // 2) Generic OOXML single-Val fallback — pPr first, rPr second,
             //    matching SetStylePath's default branch. Detached probes
             //    avoid leaking empty containers on misses.

@@ -286,6 +286,14 @@ internal static class SchemaHelpLoader
         "series.", "trendline.", "errbars.", "errbar.",
         "datatable.", "displayunitslabel.", "trendlinelabel.",
         "combo.", "area.", "style.",
+        // Word OOXML "element.attr" dotted keys for the generic typed-attr
+        // fallback (TypedAttributeFallback.TrySet). Each entry corresponds
+        // to a wordprocessing element whose attrs the fallback can write.
+        // Schema validation is delegated to OpenXML SDK at write time, so
+        // typos like `ind.notAttr` reach the handler and get rejected
+        // there with a precise message — unlike unknown bare keys, which
+        // are filtered upstream.
+        "ind.", "shd.", "u.", "spacing.", "pbdr.",
     };
 
     /// <summary>

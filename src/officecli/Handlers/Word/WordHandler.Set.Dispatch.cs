@@ -683,6 +683,28 @@ public partial class WordHandler
                     // mismatched containers, so a wrong probe just returns
                     // false. Use detached probes to avoid creating orphan
                     // empty rPr/pPr on misses.
+
+                    // Dotted "element.attr=value" first, so ind.firstLine /
+                    // shd.fill / font.eastAsia / spacing.beforeLines etc.
+                    // don't get accidentally coerced into a single-val leaf.
+                    if (key.Contains('.'))
+                    {
+                        var pPrAttrProbe = new StyleParagraphProperties();
+                        if (Core.TypedAttributeFallback.TrySet(pPrAttrProbe, key, value))
+                        {
+                            var pPrReal = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                            Core.TypedAttributeFallback.TrySet(pPrReal, key, value);
+                            break;
+                        }
+                        var rPrAttrProbe = new StyleRunProperties();
+                        if (Core.TypedAttributeFallback.TrySet(rPrAttrProbe, key, value))
+                        {
+                            var rPrReal = style.StyleRunProperties ?? style.AppendChild(new StyleRunProperties());
+                            Core.TypedAttributeFallback.TrySet(rPrReal, key, value);
+                            break;
+                        }
+                    }
+
                     var pPrProbe = new StyleParagraphProperties();
                     if (Core.GenericXmlQuery.TryCreateTypedChild(pPrProbe, key, value))
                     {
