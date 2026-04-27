@@ -380,6 +380,33 @@ public partial class WordHandler
             resultPath = $"{parentPath}/oMath[{mathCount}]";
             newElement = inlinePara;
         }
+        else if (mode == "inline" && (parent is Body || parent is SdtBlock))
+        {
+            // Inline math under Body: wrap in a w:p (Body cannot host m:oMath directly)
+            // but emit a bare m:oMath instead of m:oMathPara so the math renders as
+            // inline-with-text rather than as a centered display equation.
+            var mathElement = FormulaParser.Parse(formula);
+            M.OfficeMath inlineOMath = mathElement is M.OfficeMath direct
+                ? direct
+                : new M.OfficeMath(mathElement.CloneNode(true));
+            var hostPara = new Paragraph(inlineOMath);
+            AssignParaId(hostPara);
+            if (index.HasValue)
+            {
+                var children = parent.ChildElements.ToList();
+                if (index.Value < children.Count)
+                    parent.InsertBefore(hostPara, children[index.Value]);
+                else
+                    AppendToParent(parent, hostPara);
+            }
+            else
+            {
+                AppendToParent(parent, hostPara);
+            }
+            var pIdx = parent.Elements<Paragraph>().Count();
+            resultPath = $"{parentPath}/{BuildParaPathSegment(hostPara, pIdx)}/oMath[1]";
+            newElement = hostPara;
+        }
         else
         {
             // Display mode: create m:oMathPara

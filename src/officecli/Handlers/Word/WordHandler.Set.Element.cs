@@ -679,9 +679,36 @@ public partial class WordHandler
                     mPara.AppendChild(oMath);
                     break;
                 }
+                case "mode":
+                {
+                    var modeNorm = value.ToLowerInvariant();
+                    if (modeNorm == "inline")
+                    {
+                        // Unwrap m:oMathPara → bare m:oMath inside the host w:p so
+                        // the equation renders inline-with-text rather than as a
+                        // centered display block.
+                        var hostPara = mPara.Ancestors<Paragraph>().FirstOrDefault();
+                        var inner = mPara.Elements<M.OfficeMath>().FirstOrDefault();
+                        if (hostPara != null && inner != null)
+                        {
+                            var clone = (M.OfficeMath)inner.CloneNode(true);
+                            hostPara.InsertBefore(clone, mPara);
+                            mPara.Remove();
+                        }
+                    }
+                    else if (modeNorm == "display")
+                    {
+                        // Already display — no-op (mPara is m:oMathPara wrapping m:oMath).
+                    }
+                    else
+                    {
+                        unsupported.Add($"mode (valid: inline, display)");
+                    }
+                    break;
+                }
                 default:
                     unsupported.Add(unsupported.Count == 0
-                        ? $"{key} (valid equation props: formula)"
+                        ? $"{key} (valid equation props: formula, mode)"
                         : key);
                     break;
             }
