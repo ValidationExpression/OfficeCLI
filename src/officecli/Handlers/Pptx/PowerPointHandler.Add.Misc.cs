@@ -374,26 +374,14 @@ public partial class PowerPointHandler
 
                 // Build animation value string from properties
                 var effect = properties.GetValueOrDefault("effect", "fade");
-                // bt-1 fix: detect class suffix on effect (fly-out, zoom-in,
-                // wipe-entrance, fade-exit). If user did not pass an explicit
-                // class= property, the suffix wins over the default "entrance".
-                // Otherwise the explicit class= wins (suffix stripped).
                 var explicitCls = properties.GetValueOrDefault("class");
-                string? suffixCls = null;
-                var dashIdx = effect.LastIndexOf('-');
-                if (dashIdx > 0)
-                {
-                    var tail = effect[(dashIdx + 1)..].ToLowerInvariant();
-                    suffixCls = tail switch
-                    {
-                        "in" or "entrance" or "entr" => "entrance",
-                        "out" or "exit" => "exit",
-                        "emph" or "emphasis" => "emphasis",
-                        _ => null
-                    };
-                    if (suffixCls != null)
-                        effect = effect[..dashIdx];
-                }
+                // bt-1 / fuzz-1 fix: detect class suffix on effect (fly-out,
+                // zoom-in, wipe-entrance, fade-exit). If user did not pass an
+                // explicit class= property, the suffix wins over the default
+                // "entrance". Reject contradictory class tokens (fly-in-out)
+                // rather than silently keeping the last one.
+                var (effectStripped, suffixCls) = ParseEffectClassSuffix(effect);
+                effect = effectStripped;
                 var cls = explicitCls ?? suffixCls ?? "entrance";
                 // CONSISTENCY(animation-dur-alias): accept "dur" as alias for
                 // "duration" — mirrors the short name used elsewhere (transition
@@ -754,4 +742,55 @@ public partial class PowerPointHandler
                 return $"{parentPath}/{created.LocalName}[{createdIdx}]";
     }
 
+    /// <summary>
+    /// Parse trailing class-suffix tokens off an animation effect name.
+    /// Returns the stripped effect plus the resolved class ("entrance"/"exit"/
+    /// "emphasis") or null if no suffix is present. Throws when contradictory
+    /// class tokens appear in the effect string (e.g. "fly-in-out").
+    /// CONSISTENCY(animation-class-suffix): shared by AddAnimation and
+    /// SetShapeAnimationByPath so Add and Set route class identically.
+    /// </summary>
+    private static (string effect, string? cls) ParseEffectClassSuffix(string effect)
+    {
+        if (string.IsNullOrEmpty(effect)) return (effect, null);
+
+        static string? ClassOf(string seg) => seg switch
+        {
+            "in" or "entrance" or "entr" => "entrance",
+            "out" or "exit" => "exit",
+            "emph" or "emphasis" => "emphasis",
+            _ => null
+        };
+
+        // Scan all dash-separated segments for class tokens. Reject any pair
+        // of segments that resolve to different classes — silently keeping the
+        // last token has bitten users (fuzz-1: fly-in-out vs fly-out-in).
+        var segs = effect.Split('-');
+        string? seenClass = null;
+        string? seenToken = null;
+        for (int i = 1; i < segs.Length; i++)
+        {
+            var c = ClassOf(segs[i].ToLowerInvariant());
+            if (c == null) continue;
+            if (seenClass != null && seenClass != c)
+                throw new ArgumentException(
+                    $"Animation effect '{effect}' has contradictory class tokens "
+                    + $"'{seenToken}' ({seenClass}) and '{segs[i]}' ({c}). "
+                    + "Pass exactly one of: in/out/entrance/exit/emphasis, "
+                    + "or use the class= property.");
+            seenClass = c;
+            seenToken = segs[i];
+        }
+
+        // Strip only a trailing class suffix from the effect name (preserve
+        // pre-existing direction/duration tokens that other parsers handle).
+        var dashIdx = effect.LastIndexOf('-');
+        if (dashIdx > 0)
+        {
+            var tailCls = ClassOf(effect[(dashIdx + 1)..].ToLowerInvariant());
+            if (tailCls != null)
+                return (effect[..dashIdx], tailCls);
+        }
+        return (effect, seenClass);
+    }
 }

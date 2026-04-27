@@ -605,7 +605,15 @@ public partial class PowerPointHandler
                 : (existing.Format.TryGetValue(key, out var ev) ? ev?.ToString() ?? fallback ?? "" : fallback ?? "");
 
         var effect = Get("effect", "fade");
-        var cls = Get("class", "entrance");
+        // bt-1 fix: mirror AddAnimation's class-suffix routing so set
+        // effect=fly-out flips class to exit (was silently kept as
+        // entrance). CONSISTENCY(animation-class-suffix).
+        var explicitCls = properties.TryGetValue("class", out var ec) ? ec : null;
+        var (effectStripped, suffixCls) = ParseEffectClassSuffix(effect);
+        effect = effectStripped;
+        var cls = explicitCls
+            ?? suffixCls
+            ?? (existing.Format.TryGetValue("class", out var exCls) ? exCls?.ToString() ?? "entrance" : "entrance");
         var duration = properties.TryGetValue("duration", out var dv) ? dv
             : properties.TryGetValue("dur", out var dv2) ? dv2
             : (existing.Format.TryGetValue("duration", out var ed) ? ed?.ToString() ?? "500" : "500");
