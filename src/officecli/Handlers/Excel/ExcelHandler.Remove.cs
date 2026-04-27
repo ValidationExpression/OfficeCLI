@@ -110,24 +110,52 @@ public partial class ExcelHandler
                 }
             }
 
-            // CONSISTENCY(remove-sheet-refs): sparklines on other sheets
-            // carry <xne:f>SheetName!A1:A4</xne:f> data ranges that
-            // suffer the exact same "external links" warning if left
-            // dangling. Mirror the chart-ref guard above.
+            // CONSISTENCY(remove-sheet-refs): worksheet XML on other
+            // sheets carries sheet-qualified formula text in three more
+            // shapes that produce the same "external links" warning if
+            // left dangling. Walk typed descendants per worksheet so we
+            // don't false-positive on cell text or comments containing
+            // the literal substring "Sheet1!".
+            //   - sparkline data range  (<xne:f>SheetName!A1:A4</xne:f>)
+            //   - data validation list  (<x:formula1>SheetName!...</x:formula1>)
+            //   - conditional formatting (<x:formula>SheetName!...</x:formula>)
+            // Cell formulas themselves (<x:f>) are intentionally not
+            // guarded — Excel shows #REF! on open, which the existing
+            // R9-1 cache invalidation already accommodates.
             foreach (var otherWsPart in workbookPart.WorksheetParts)
             {
                 if (sheetWsPartForCheck != null && ReferenceEquals(otherWsPart, sheetWsPartForCheck)) continue;
                 var wsRoot = otherWsPart.Worksheet;
                 if (wsRoot == null) continue;
+
+                bool MatchesRef(string? text) =>
+                    text != null
+                    && (text.Contains(refToken, StringComparison.OrdinalIgnoreCase)
+                        || text.Contains(quotedRefToken, StringComparison.OrdinalIgnoreCase));
+
                 foreach (var f in wsRoot.Descendants<DocumentFormat.OpenXml.Office.Excel.Formula>())
-                {
-                    if (f.Text == null) continue;
-                    if (f.Text.Contains(refToken, StringComparison.OrdinalIgnoreCase)
-                        || f.Text.Contains(quotedRefToken, StringComparison.OrdinalIgnoreCase))
+                    if (MatchesRef(f.Text))
                         throw new ArgumentException(
                             $"Cannot remove sheet '{sheetName}': it is referenced by a sparkline in this workbook. " +
                             $"Remove or repoint the sparkline first.");
-                }
+
+                foreach (var f in wsRoot.Descendants<DocumentFormat.OpenXml.Spreadsheet.Formula1>())
+                    if (MatchesRef(f.Text))
+                        throw new ArgumentException(
+                            $"Cannot remove sheet '{sheetName}': it is referenced by a data validation formula. " +
+                            $"Remove or repoint the validation first.");
+
+                foreach (var f in wsRoot.Descendants<DocumentFormat.OpenXml.Spreadsheet.Formula2>())
+                    if (MatchesRef(f.Text))
+                        throw new ArgumentException(
+                            $"Cannot remove sheet '{sheetName}': it is referenced by a data validation formula. " +
+                            $"Remove or repoint the validation first.");
+
+                foreach (var f in wsRoot.Descendants<DocumentFormat.OpenXml.Spreadsheet.Formula>())
+                    if (MatchesRef(f.Text))
+                        throw new ArgumentException(
+                            $"Cannot remove sheet '{sheetName}': it is referenced by a conditional formatting rule. " +
+                            $"Remove or repoint the rule first.");
             }
 
             // R10-2: capture pivot cache definitions referenced by this
