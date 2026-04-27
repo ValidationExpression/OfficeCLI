@@ -167,7 +167,46 @@ internal static class DrawingEffectsHelper
             if (!effectList.HasChildren) rPr.RemoveChild(effectList);
             return;
         }
-        effectList.AppendChild(builder());
+        // CT_EffectList children must appear in schema order (blur →
+        // fillOverlay → glow → innerShdw → outerShdw → prstShdw → reflection
+        // → softEdge); Excel/PowerPoint reject out-of-order trees with
+        // Sch_UnexpectedElementContentExpectingComplex. Insert before the
+        // first sibling that would otherwise come after us, instead of the
+        // naive AppendChild that lands every effect at the tail in arrival
+        // order.
+        InsertEffectInSchemaOrder(effectList, builder());
+    }
+
+    /// <summary>
+    /// Schema order for CT_EffectList children. Mirrored in
+    /// PowerPointHandler.Effects.cs for the shape-level effectLst; keep both
+    /// in sync if you add a new effect type.
+    /// </summary>
+    private static readonly Type[] s_effectListChildOrder =
+    [
+        typeof(Drawing.Blur),
+        typeof(Drawing.FillOverlay),
+        typeof(Drawing.Glow),
+        typeof(Drawing.InnerShadow),
+        typeof(Drawing.OuterShadow),
+        typeof(Drawing.PresetShadow),
+        typeof(Drawing.Reflection),
+        typeof(Drawing.SoftEdge),
+    ];
+
+    private static void InsertEffectInSchemaOrder(OpenXmlElement effectList, OpenXmlElement effect)
+    {
+        var targetIdx = Array.IndexOf(s_effectListChildOrder, effect.GetType());
+        foreach (var child in effectList.ChildElements)
+        {
+            var childIdx = Array.IndexOf(s_effectListChildOrder, child.GetType());
+            if (childIdx > targetIdx)
+            {
+                effectList.InsertBefore(effect, child);
+                return;
+            }
+        }
+        effectList.AppendChild(effect);
     }
 
     /// <summary>
