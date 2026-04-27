@@ -233,9 +233,49 @@ public partial class PowerPointHandler
                     if (nvPr != null) nvPr.Name = value;
                     break;
                 }
+                case "shadow":
+                {
+                    var spPrSh = pic.ShapeProperties ?? (pic.ShapeProperties = new ShapeProperties());
+                    ApplyShadow(spPrSh, value);
+                    break;
+                }
+                case "glow":
+                {
+                    var spPrGl = pic.ShapeProperties ?? (pic.ShapeProperties = new ShapeProperties());
+                    ApplyGlow(spPrGl, value);
+                    break;
+                }
+                case "brightness" or "contrast":
+                {
+                    // Brightness ∈ [-100, 100] → a:lumOff (-100000..100000).
+                    // Contrast   ∈ [-100, 100] → a:lumMod (0..200000, baseline 100000).
+                    // CONSISTENCY(picture-set-props): mirrors Word picture set semantics.
+                    var blipBC = pic.BlipFill?.GetFirstChild<Drawing.Blip>();
+                    if (blipBC == null) { unsupported.Add(key); break; }
+                    if (!double.TryParse(value, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var bcVal)
+                        || bcVal < -100 || bcVal > 100)
+                        throw new ArgumentException($"Invalid '{key}' value: '{value}'. Expected number in [-100, 100].");
+
+                    var existingLumMod = blipBC.Elements<Drawing.LuminanceModulation>().FirstOrDefault();
+                    var existingLumOff = blipBC.Elements<Drawing.LuminanceOffset>().FirstOrDefault();
+                    int curLumModPct = existingLumMod?.Val?.Value is int vm ? vm : 100000;
+                    int curLumOffPct = existingLumOff?.Val?.Value is int vo ? vo : 0;
+
+                    if (key.Equals("brightness", StringComparison.OrdinalIgnoreCase))
+                        curLumOffPct = (int)(bcVal * 1000);
+                    else
+                        curLumModPct = 100000 + (int)(bcVal * 1000);
+
+                    existingLumMod?.Remove();
+                    existingLumOff?.Remove();
+                    blipBC.AppendChild(new Drawing.LuminanceModulation { Val = curLumModPct });
+                    blipBC.AppendChild(new Drawing.LuminanceOffset { Val = curLumOffPct });
+                    break;
+                }
                 default:
                     if (unsupported.Count == 0)
-                        unsupported.Add($"{key} (valid picture props: path, src, x, y, width, height, rotation, opacity, name, crop, cropleft, croptop, cropright, cropbottom)");
+                        unsupported.Add($"{key} (valid picture props: path, src, x, y, width, height, rotation, opacity, name, crop, cropleft, croptop, cropright, cropbottom, shadow, glow, brightness, contrast)");
                     else
                         unsupported.Add(key);
                     break;
