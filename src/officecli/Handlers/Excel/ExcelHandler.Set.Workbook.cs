@@ -245,6 +245,39 @@ public partial class ExcelHandler
                 SaveWorkbook();
                 return true;
             }
+            case "workbook.password" or "workbookpassword":
+            {
+                var prot = EnsureWorkbookProtection();
+                if (string.IsNullOrEmpty(value) || value.Equals("none", StringComparison.OrdinalIgnoreCase))
+                {
+                    prot.WorkbookPassword = null;
+                }
+                else
+                {
+                    // ECMA-376 Part 4 14.7.1 legacy password hash (same algorithm
+                    // used by sheet password). Truncated to 16-bit short — known
+                    // weak, but matches what Excel writes for back-compat password
+                    // fields without the modern algorithmName/saltValue/hashValue
+                    // triple.
+                    int hash = 0;
+                    for (int ci = value.Length - 1; ci >= 0; ci--)
+                    {
+                        hash = ((hash >> 14) & 1) | ((hash << 1) & 0x7FFF);
+                        hash ^= value[ci];
+                    }
+                    hash = ((hash >> 14) & 1) | ((hash << 1) & 0x7FFF);
+                    hash ^= value.Length;
+                    hash ^= 0xCE4B;
+                    prot.WorkbookPassword = HexBinaryValue.FromString(hash.ToString("X4"));
+                    // Implies lockStructure unless caller overrides — mirrors Excel UI
+                    // (the password field is only meaningful with at least one lock).
+                    if (prot.LockStructure?.Value != true && prot.LockWindows?.Value != true)
+                        prot.LockStructure = true;
+                }
+                CleanupEmptyWorkbookProtection();
+                SaveWorkbook();
+                return true;
+            }
 
             default:
                 return false;
@@ -397,6 +430,7 @@ public partial class ExcelHandler
         {
             if (prot.LockStructure?.Value == true) node.Format["workbook.lockStructure"] = true;
             if (prot.LockWindows?.Value == true) node.Format["workbook.lockWindows"] = true;
+            if (prot.WorkbookPassword?.HasValue == true) node.Format["workbook.password"] = "***";
         }
     }
 }
