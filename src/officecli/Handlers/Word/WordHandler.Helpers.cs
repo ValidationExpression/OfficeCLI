@@ -1107,6 +1107,16 @@ public partial class WordHandler
         if (runTexts.Count == 0) return 0;
 
         var fullText = string.Concat(runTexts.Select(rt => rt.TextElement.Text));
+        // CONSISTENCY(regex-backref-expand): collect Match objects in regex mode so we can
+        // call Match.Result(replace) — which expands backreferences against the original
+        // match captures, and unlike re-running Regex.Replace on the substring, correctly
+        // handles lookaround anchors (e.g. r"foo(?=bar)") whose context is lost in isolation.
+        var matchObjs = isRegex
+            ? System.Text.RegularExpressions.Regex.Matches(fullText, pattern)
+                .Cast<System.Text.RegularExpressions.Match>()
+                .Where(m => m.Length > 0)
+                .ToList()
+            : null;
         var matches = FindMatchRanges(fullText, pattern, isRegex);
         if (matches.Count == 0) return 0;
 
@@ -1118,14 +1128,12 @@ public partial class WordHandler
 
             if (replace != null)
             {
-                // For regex replace, expand backreferences ($1, ${name}, etc.)
-                // by re-running Regex.Replace on the matched substring.
+                // For regex replace, expand backreferences ($1, ${name}, etc.) via
+                // Match.Result so lookaround context is preserved.
                 string effectiveReplace = replace;
-                if (isRegex)
+                if (isRegex && matchObjs != null && i < matchObjs.Count)
                 {
-                    var matchedText = fullText.Substring(matchStart, matchLen);
-                    effectiveReplace = System.Text.RegularExpressions.Regex.Replace(
-                        matchedText, pattern, replace);
+                    effectiveReplace = matchObjs[i].Result(replace);
                 }
 
                 // Step 1: Replace text in affected runs (same logic as old ReplaceInParagraph)
