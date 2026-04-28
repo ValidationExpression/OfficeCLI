@@ -69,6 +69,34 @@ public partial class WordHandler
             parent = fnBody!;
             parentPath = canonicalPath!;
         }
+        else if ((type?.Equals("header", StringComparison.OrdinalIgnoreCase) ?? false)
+                 || (type?.Equals("footer", StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            // /section[N] for header/footer add: NavigateToElement only
+            // resolves break-paragraph carriers (n <= sectParas.Count); the
+            // final body-level sectPr (n == sectParas.Count + 1) has no
+            // carrier paragraph. AddHeader/AddFooter map parentPath →
+            // sectPr via ResolveTargetSectPrForHeaderFooter (string-based,
+            // independent of `parent`), so route through with parent=body.
+            var sectMatch = System.Text.RegularExpressions.Regex.Match(
+                parentPath, @"^/section\[(\d+)\]/?$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (sectMatch.Success)
+            {
+                parent = body;
+            }
+            else
+            {
+                List<PathSegment> parts;
+                try { parts = ParsePath(parentPath); }
+                catch (Exception ex) when (ex is not ArgumentException and not InvalidOperationException)
+                {
+                    throw new ArgumentException($"Malformed parent path '{parentPath}'. Check selector brackets and escape sequences.", ex);
+                }
+                parent = NavigateToElement(parts, out var ctx)
+                    ?? throw new ArgumentException($"Path not found: {parentPath}" + (ctx != null ? $". {ctx}" : ""));
+            }
+        }
         else
         {
             List<PathSegment> parts;
