@@ -29,6 +29,7 @@
         "percentStacked": { "prefix": "percentStacked", "example": "percentStackedBar", "appliesWhen": { "chartType": ["bar","column","line","area"] } }
       },
       "aliases": { "col": "column", "donut": "doughnut", "xy": "scatter", "spider": "radar", "ohlc": "stock", "wf": "waterfall" },
+      "propAliases": ["type"],
       "add": true,
       "set": true,
       "get": true,
