@@ -473,6 +473,7 @@ public partial class WordHandler
         string? spaceBefore = null, spaceBeforeSrc = null;
         string? spaceAfter = null, spaceAfterSrc = null;
         string? lineSpacing = null, lineSpacingSrc = null;
+        string? direction = null, directionSrc = null;
 
         for (int i = chain.Count - 1; i >= 0; i--)
         {
@@ -503,6 +504,20 @@ public partial class WordHandler
                     ppr.SpacingBetweenLines.LineRule?.InnerText);
                 lineSpacingSrc = layer;
             }
+            // R8-1: paragraph-scope effective.direction. Mirrors the
+            // run-level effective.rtl pattern but reads <w:bidi/> from the
+            // style-chain pPr. TryReadOnOff defends against the malformed
+            // attribute case (R8-fuzz-5).
+            var styleBidi = ppr.GetFirstChild<BiDi>();
+            if (styleBidi != null)
+            {
+                var on = TryReadOnOff(styleBidi.Val);
+                if (on.HasValue)
+                {
+                    direction = on.Value ? "rtl" : "ltr";
+                    directionSrc = layer;
+                }
+            }
         }
 
         if (!node.Format.ContainsKey("alignment") && alignment != null)
@@ -524,6 +539,53 @@ public partial class WordHandler
         {
             node.Format["effective.lineSpacing"] = lineSpacing;
             if (lineSpacingSrc != null) node.Format["effective.lineSpacing.src"] = lineSpacingSrc;
+        }
+        // R8-1: paragraph-scope effective.direction. After the paragraph-style
+        // chain, fall back to the enclosing table style's pPr.bidi (paragraphs
+        // inside a table cell inherit from tblPr-style.pPr) and finally to
+        // docDefaults pPrDefault.bidi. PPT has had this since R5.
+        if (!node.Format.ContainsKey("direction") && direction == null)
+        {
+            // Enclosing table style
+            var tbl = para.Ancestors<Table>().FirstOrDefault();
+            var tblStyleId = tbl?.GetFirstChild<TableProperties>()?.TableStyle?.Val?.Value;
+            if (tblStyleId != null)
+            {
+                var tblStyle = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
+                    ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == tblStyleId);
+                var tblPpr = tblStyle?.StyleParagraphProperties;
+                var tblBidi = tblPpr?.GetFirstChild<BiDi>();
+                if (tblBidi != null)
+                {
+                    var on = TryReadOnOff(tblBidi.Val);
+                    if (on.HasValue)
+                    {
+                        direction = on.Value ? "rtl" : "ltr";
+                        directionSrc = $"/styles/{tblStyleId}";
+                    }
+                }
+            }
+        }
+        if (!node.Format.ContainsKey("direction") && direction == null)
+        {
+            // docDefaults pPrDefault.bidi
+            var docDefaults = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles?.DocDefaults;
+            var pPrDefault = docDefaults?.ParagraphPropertiesDefault?.ParagraphPropertiesBaseStyle;
+            var ddBidi = pPrDefault?.GetFirstChild<BiDi>();
+            if (ddBidi != null)
+            {
+                var on = TryReadOnOff(ddBidi.Val);
+                if (on.HasValue)
+                {
+                    direction = on.Value ? "rtl" : "ltr";
+                    directionSrc = "/docDefaults";
+                }
+            }
+        }
+        if (!node.Format.ContainsKey("direction") && direction != null)
+        {
+            node.Format["effective.direction"] = direction;
+            if (directionSrc != null) node.Format["effective.direction.src"] = directionSrc;
         }
     }
 
