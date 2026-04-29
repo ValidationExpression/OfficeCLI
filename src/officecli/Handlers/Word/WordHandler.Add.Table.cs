@@ -283,6 +283,23 @@ public partial class WordHandler
         if (properties.TryGetValue("text", out var cellTxt))
             cellParagraph.AppendChild(new Run(new Text(cellTxt) { Space = SpaceProcessingModeValues.Preserve }));
 
+        // Reading direction (Arabic / Hebrew). Mirrors AddParagraph: 'rtl'
+        // writes <w:bidi/> on the cell paragraph's pPr and stamps <w:rtl/>
+        // on the paragraph mark + any text run that was just appended.
+        // CONSISTENCY(rtl-cascade).
+        if (properties.TryGetValue("direction", out var cellDirRaw)
+            || properties.TryGetValue("dir", out cellDirRaw)
+            || properties.TryGetValue("bidi", out cellDirRaw))
+        {
+            bool cellRtl = ParseDirectionRtl(cellDirRaw);
+            var cellPProps = cellParagraph.ParagraphProperties ?? cellParagraph.PrependChild(new ParagraphProperties());
+            if (cellRtl) cellPProps.BiDi = new BiDi();
+            var cellMarkRPr = cellPProps.ParagraphMarkRunProperties ?? cellPProps.AppendChild(new ParagraphMarkRunProperties());
+            ApplyRunFormatting(cellMarkRPr, "rtl", cellRtl ? "true" : "false");
+            foreach (var existingRun in cellParagraph.Descendants<Run>())
+                ApplyRunFormatting(EnsureRunProperties(existingRun), "rtl", cellRtl ? "true" : "false");
+        }
+
         var newCell = new TableCell(cellParagraph);
 
         if (properties.TryGetValue("width", out var cellWidth))

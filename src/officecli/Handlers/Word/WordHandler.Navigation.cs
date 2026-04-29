@@ -2124,6 +2124,10 @@ public partial class WordHandler
         var just = firstPara?.ParagraphProperties?.Justification?.Val;
         if (just != null)
             node.Format["alignment"] = just.InnerText;
+        // Direction: <w:bidi/> on the first cell paragraph maps to canonical
+        // direction=rtl. Mirrors paragraph readback canonical key.
+        if (firstPara?.ParagraphProperties?.BiDi != null)
+            node.Format["direction"] = "rtl";
         // Run-level formatting from first run (mirrors PPTX table cell behavior)
         var firstRun = cell.Descendants<Run>().FirstOrDefault();
         if (firstRun?.RunProperties != null)

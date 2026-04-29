@@ -1165,6 +1165,28 @@ public partial class WordHandler
                         ApplyRunFormatting(pmrp, key, value);
                     }
                     break;
+                case "direction" or "dir" or "bidi":
+                {
+                    // CONSISTENCY(rtl-cascade): table cell direction mirrors
+                    // SetElementParagraph (Set.Element.cs:951-961) — set
+                    // <w:bidi/> on every cell paragraph's pPr and stamp
+                    // <w:rtl/> on every run + paragraph mark. <w:bidi/> alone
+                    // flips layout but doesn't reverse character order in
+                    // runs, so the cascade is required for proper Arabic /
+                    // Hebrew rendering inside a cell.
+                    bool cellRtl = ParseDirectionRtl(value);
+                    foreach (var cellPara in cell.Elements<Paragraph>())
+                    {
+                        var cpPr = cellPara.ParagraphProperties ?? cellPara.PrependChild(new ParagraphProperties());
+                        if (cellRtl) cpPr.BiDi = new BiDi();
+                        else cpPr.RemoveAllChildren<BiDi>();
+                        var cMarkRPr = cpPr.ParagraphMarkRunProperties ?? cpPr.AppendChild(new ParagraphMarkRunProperties());
+                        ApplyRunFormatting(cMarkRPr, "rtl", cellRtl ? "true" : "false");
+                        foreach (var cellRun in cellPara.Descendants<Run>())
+                            ApplyRunFormatting(EnsureRunProperties(cellRun), "rtl", cellRtl ? "true" : "false");
+                    }
+                    break;
+                }
                 case "shd" or "shading" or "fill":
                     var shdParts = value.Split(';');
                     if (shdParts.Length >= 3 && shdParts[0].Equals("gradient", StringComparison.OrdinalIgnoreCase))
