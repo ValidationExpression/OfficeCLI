@@ -1126,6 +1126,35 @@ public partial class ExcelHandler
                     sheetView.ShowRowColHeaders = ParseHelpers.IsTruthy(value);
                     break;
                 }
+                case "righttoleft" or "rtl" or "direction" or "sheet.direction":
+                {
+                    // RTL sheet view (Arabic / Hebrew layouts) — column A renders
+                    // on the right, column scroll direction inverts.
+                    var sheetViews = ws.GetFirstChild<SheetViews>();
+                    if (sheetViews == null)
+                    {
+                        sheetViews = new SheetViews();
+                        ws.InsertAt(sheetViews, 0);
+                    }
+                    var sheetView = sheetViews.GetFirstChild<SheetView>();
+                    if (sheetView == null)
+                    {
+                        sheetView = new SheetView { WorkbookViewId = 0 };
+                        sheetViews.AppendChild(sheetView);
+                    }
+                    bool rtlOn = key.ToLowerInvariant() switch
+                    {
+                        "direction" or "sheet.direction" => value.ToLowerInvariant() switch
+                        {
+                            "rtl" or "righttoleft" or "right-to-left" or "true" or "1" => true,
+                            "ltr" or "lefttoright" or "left-to-right" or "false" or "0" or "" => false,
+                            _ => throw new ArgumentException($"Invalid direction value: '{value}'. Valid: rtl, ltr.")
+                        },
+                        _ => ParseHelpers.IsTruthy(value),
+                    };
+                    sheetView.RightToLeft = rtlOn;
+                    break;
+                }
 
                 case "tabcolor" or "tab_color":
                 {

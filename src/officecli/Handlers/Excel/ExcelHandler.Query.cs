@@ -171,6 +171,8 @@ public partial class ExcelHandler
                 sheetNode.Format["gridlines"] = false;
             if (sheetView?.ShowRowColHeaders != null && !sheetView.ShowRowColHeaders.Value)
                 sheetNode.Format["headings"] = false;
+            if (sheetView?.RightToLeft?.HasValue == true && sheetView.RightToLeft.Value)
+                sheetNode.Format["rightToLeft"] = true;
 
             // Include tab color. Excel does not render tab transparency, so
             // strip any alpha component before formatting — `Add tabColor=80FF0000`
