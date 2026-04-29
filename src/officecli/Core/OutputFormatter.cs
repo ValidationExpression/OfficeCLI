@@ -16,7 +16,9 @@ internal enum OutputFormat
 
 internal class ViewResult
 {
+    [JsonPropertyName("view")]
     public string View { get; set; } = "";
+    [JsonPropertyName("content")]
     public string Content { get; set; } = "";
 }
 
@@ -30,23 +32,33 @@ internal class NodesResult
 
 internal class IssuesResult
 {
+    [JsonPropertyName("count")]
     public int Count { get; set; }
+    [JsonPropertyName("issues")]
     public List<DocumentIssue> Issues { get; set; } = new();
 }
 
 internal class ErrorResult
 {
+    [JsonPropertyName("error")]
     public string Error { get; set; } = "";
+    [JsonPropertyName("code")]
     public string? Code { get; set; }
+    [JsonPropertyName("suggestion")]
     public string? Suggestion { get; set; }
+    [JsonPropertyName("help")]
     public string? Help { get; set; }
+    [JsonPropertyName("validValues")]
     public string[]? ValidValues { get; set; }
 }
 
 internal class CliWarning
 {
+    [JsonPropertyName("message")]
     public string Message { get; set; } = "";
+    [JsonPropertyName("code")]
     public string? Code { get; set; }
+    [JsonPropertyName("suggestion")]
     public string? Suggestion { get; set; }
 }
 
