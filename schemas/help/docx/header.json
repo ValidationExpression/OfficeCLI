@@ -51,6 +51,15 @@
       "readback": "first-paragraph Justification.Val.InnerText",
       "enforcement": "strict"
     },
+    "direction": {
+      "type": "enum",
+      "values": ["rtl", "ltr"],
+      "aliases": ["dir", "bidi"],
+      "description": "Reading direction. 'rtl' writes <w:bidi/> on the header paragraph and cascades <w:rtl/> to the paragraph mark so later runs inherit RTL.",
+      "add": true, "set": true, "get": false,
+      "examples": ["--prop direction=rtl"],
+      "enforcement": "strict"
+    },
     "font": {
       "type": "string",
       "add": true, "set": true, "get": true,

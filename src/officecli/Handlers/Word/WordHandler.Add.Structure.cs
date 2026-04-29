@@ -1200,6 +1200,18 @@ public partial class WordHandler
 
         if (properties.TryGetValue("alignment", out var hAlign) || properties.TryGetValue("align", out hAlign))
             hPProps.Justification = new Justification { Val = ParseJustification(hAlign) };
+        // Reading direction (Arabic / Hebrew). Mirrors AddParagraph: 'rtl'
+        // writes <w:bidi/> on pPr AND <w:rtl/> on the paragraph mark rPr so
+        // any later runs added via Set inherit the run-level direction.
+        if (properties.TryGetValue("direction", out var hDirRaw)
+            || properties.TryGetValue("dir", out hDirRaw)
+            || properties.TryGetValue("bidi", out hDirRaw))
+        {
+            var hRtl = ParseDirectionRtl(hDirRaw);
+            if (hRtl) hPProps.BiDi = new BiDi();
+            var hMarkRPr = hPProps.ParagraphMarkRunProperties ?? hPProps.AppendChild(new ParagraphMarkRunProperties());
+            ApplyRunFormatting(hMarkRPr, "rtl", hRtl ? "true" : "false");
+        }
         hPara.AppendChild(hPProps);
 
         // Build shared run properties for text and field runs
@@ -1347,6 +1359,16 @@ public partial class WordHandler
 
         if (properties.TryGetValue("alignment", out var fAlign) || properties.TryGetValue("align", out fAlign))
             fPProps.Justification = new Justification { Val = ParseJustification(fAlign) };
+        // Reading direction (Arabic / Hebrew) — mirrors AddHeader.
+        if (properties.TryGetValue("direction", out var fDirRaw)
+            || properties.TryGetValue("dir", out fDirRaw)
+            || properties.TryGetValue("bidi", out fDirRaw))
+        {
+            var fRtl = ParseDirectionRtl(fDirRaw);
+            if (fRtl) fPProps.BiDi = new BiDi();
+            var fMarkRPr = fPProps.ParagraphMarkRunProperties ?? fPProps.AppendChild(new ParagraphMarkRunProperties());
+            ApplyRunFormatting(fMarkRPr, "rtl", fRtl ? "true" : "false");
+        }
         fPara.AppendChild(fPProps);
 
         // Build shared run properties for text and field runs
