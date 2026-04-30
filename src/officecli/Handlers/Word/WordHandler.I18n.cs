@@ -56,9 +56,24 @@ public partial class WordHandler
         var pProps = paragraph.ParagraphProperties ?? paragraph.PrependChild(new ParagraphProperties());
 
         if (rtl)
+        {
             pProps.BiDi = new BiDi();
+        }
         else
+        {
+            // R18-fuzz-2: when the enclosing section is RTL (sectPr has
+            // <w:bidi/>), simply removing pPr.bidi leaves the paragraph
+            // inheriting RTL — the user's explicit ltr override would be
+            // silently lost. Emit <w:bidi w:val="false"/> to override
+            // section inheritance. When the section is default LTR, just
+            // remove pPr.bidi (canonical clean state).
             pProps.RemoveAllChildren<BiDi>();
+            var owningSect = FindOwningSectionProperties(paragraph);
+            if (owningSect?.GetFirstChild<BiDi>() != null)
+            {
+                pProps.BiDi = new BiDi { Val = new OnOffValue(false) };
+            }
+        }
 
         var markRPr = pProps.ParagraphMarkRunProperties
             ?? pProps.AppendChild(new ParagraphMarkRunProperties());
