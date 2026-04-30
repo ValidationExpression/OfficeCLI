@@ -272,7 +272,13 @@ internal class ExcelStyleManager
                     case "readingorder":
                         // DEFERRED(xlsx/cell-reading-order) CE10: OOXML values
                         // 0=context, 1=ltr, 2=rtl. Accept numeric or string forms.
-                        alignment.ReadingOrder = ParseReadingOrder(value);
+                        // CONSISTENCY(canonical): context (0) is the schema
+                        // default — clear the attribute rather than writing
+                        // readingOrder="0". Mirrors Get suppression of value 0
+                        // in ExcelHandler.Helpers.cs and the same direction=ltr
+                        // clear idiom used elsewhere.
+                        var roParsed = ParseReadingOrder(value);
+                        alignment.ReadingOrder = roParsed == 0u ? null : roParsed;
                         break;
                     // Long-tail keys handled below (case-preserving) — see the
                     // styleProps walk after this loop. Skip in the lowered
