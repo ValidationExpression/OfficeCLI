@@ -46,6 +46,18 @@ public partial class WordHandler
             var markRPr = pProps.ParagraphMarkRunProperties ?? pProps.AppendChild(new ParagraphMarkRunProperties());
             ApplyRunFormatting(markRPr, "rtl", paraRtl.Value ? "true" : "false");
         }
+        // CONSISTENCY(rtl-cascade): `rtl=true` on a paragraph add should
+        // mirror direction=rtl — write <w:bidi/> on pPr AND <w:rtl/> on
+        // the paragraph mark so the paragraph is fully RTL (not just any
+        // text run). Without this, `add p --prop rtl=true` left the
+        // paragraph LTR and only flagged individual runs.
+        if (paraRtl == null && properties.TryGetValue("rtl", out var paraRtlRaw) && IsTruthy(paraRtlRaw))
+        {
+            paraRtl = true;
+            pProps.BiDi = new BiDi();
+            var markRPr = pProps.ParagraphMarkRunProperties ?? pProps.AppendChild(new ParagraphMarkRunProperties());
+            ApplyRunFormatting(markRPr, "rtl", "true");
+        }
         // Complex-script run flags (bCs/iCs/szCs) hoisted above the text
         // block so an `add p --prop bold.cs=true` without explicit text
         // still records the flag on the paragraph mark rPr — matches how
