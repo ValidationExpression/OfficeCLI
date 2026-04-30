@@ -252,10 +252,14 @@ public partial class WordHandler
         }
         // CONSISTENCY(add-set-symmetry): Set supports contextualSpacing (WordHandler.Set.cs:529);
         // Add must accept the same prop so the "Add then Get" lifecycle test pattern works
-        // without falling back to a separate Set call. Mirrors keepNext/keepLines toggle
-        // semantics: false omits the element (matches Set which sets it to null on false).
-        if ((properties.TryGetValue("contextualspacing", out var addCS) || properties.TryGetValue("contextualSpacing", out addCS)) && IsTruthy(addCS))
-            pProps.ContextualSpacing = new ContextualSpacing();
+        // without falling back to a separate Set call. Both true and false write an
+        // explicit element — `false` is meaningful when a parent style sets
+        // contextualSpacing=true, since omitting the element would inherit the
+        // style's `true`. Setting `Val=false` explicitly overrides.
+        if (properties.TryGetValue("contextualspacing", out var addCS) || properties.TryGetValue("contextualSpacing", out addCS))
+            pProps.ContextualSpacing = IsTruthy(addCS)
+                ? new ContextualSpacing()
+                : new ContextualSpacing { Val = false };
         foreach (var (pk, pv) in properties)
         {
             // CONSISTENCY(add-set-symmetry): Set accepts border.top/bottom/left/right/between/bar
