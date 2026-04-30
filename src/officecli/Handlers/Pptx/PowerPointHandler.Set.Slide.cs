@@ -218,7 +218,7 @@ public partial class PowerPointHandler
                             foreach (var para in sp.TextBody?.Elements<Drawing.Paragraph>() ?? Enumerable.Empty<Drawing.Paragraph>())
                             {
                                 var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
-                                pProps.RightToLeft = rtl;
+                                pProps.RightToLeft = rtl ? (bool?)true : null;
                             }
                         }
                     }
@@ -238,7 +238,7 @@ public partial class PowerPointHandler
                             var st = txStyles.GetFirstChild<T>() ?? txStyles.AppendChild(new T());
                             var lvl1 = st.GetFirstChild<Drawing.Level1ParagraphProperties>()
                                 ?? st.AppendChild(new Drawing.Level1ParagraphProperties());
-                            lvl1.RightToLeft = rtl;
+                            lvl1.RightToLeft = rtl ? (bool?)true : null;
                         }
                         Stamp<BodyStyle>();
                         Stamp<TitleStyle>();
