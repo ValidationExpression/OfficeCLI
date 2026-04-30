@@ -1193,14 +1193,60 @@ public partial class WordHandler
         // Reject w:sectPrChange — restore original section properties
         foreach (var sectPrChange in body.Descendants<SectionPropertiesChange>().ToList())
         {
-            sectPrChange.Remove();
+            var sectPr = sectPrChange.Parent as SectionProperties;
+            if (sectPr != null)
+            {
+                var originalProps = sectPrChange.GetFirstChild<PreviousSectionProperties>();
+                if (originalProps != null)
+                {
+                    var parent = sectPr.Parent;
+                    if (parent != null)
+                    {
+                        var newSectPr = new SectionProperties();
+                        foreach (var child in originalProps.ChildElements.ToList())
+                            newSectPr.AppendChild(child.CloneNode(true));
+                        parent.ReplaceChild(newSectPr, sectPr);
+                    }
+                }
+                else
+                {
+                    sectPrChange.Remove();
+                }
+            }
+            else
+            {
+                sectPrChange.Remove();
+            }
             count++;
         }
 
-        // Reject table property changes
+        // Reject table property changes — restore original table properties
         foreach (var tblPrChange in body.Descendants<TablePropertiesChange>().ToList())
         {
-            tblPrChange.Remove();
+            var tblPr = tblPrChange.Parent as TableProperties;
+            if (tblPr != null)
+            {
+                var originalProps = tblPrChange.GetFirstChild<PreviousTableProperties>();
+                if (originalProps != null)
+                {
+                    var tbl = tblPr.Parent;
+                    if (tbl != null)
+                    {
+                        var newTblPr = new TableProperties();
+                        foreach (var child in originalProps.ChildElements.ToList())
+                            newTblPr.AppendChild(child.CloneNode(true));
+                        tbl.ReplaceChild(newTblPr, tblPr);
+                    }
+                }
+                else
+                {
+                    tblPrChange.Remove();
+                }
+            }
+            else
+            {
+                tblPrChange.Remove();
+            }
             count++;
         }
 
