@@ -147,6 +147,18 @@ public partial class WordHandler
             sectPr.AppendChild(lnType);
         }
 
+        // Section-level RTL: <w:bidi/> in sectPr flips page direction.
+        // Mirrors Set vocabulary (direction/dir/bidi). Use the schema-aware
+        // inserter so the element lands at the canonical CT_SectPrBase
+        // position regardless of what other children were appended above.
+        if (properties.TryGetValue("direction", out var sectDir)
+            || properties.TryGetValue("dir", out sectDir)
+            || properties.TryGetValue("bidi", out sectDir))
+        {
+            if (ParseDirectionRtl(sectDir))
+                InsertSectPrChildInOrder(sectPr, new BiDi());
+        }
+
         // Dotted-key fallback for sectPr-level attrs not modeled by the
         // hand-rolled blocks above (single-attr forms like docGrid.* or
         // future schema additions). CONSISTENCY(add-set-symmetry).
