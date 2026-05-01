@@ -46,10 +46,11 @@ internal static class SchemaHelpFlatRenderer
         sb.AppendLine("# ops letters: a=add s=set g=get q=query r=remove (- = not supported)");
         sb.AppendLine("# Add/Set form: officecli <fmt> add <path> --type <element> --prop key=value [--prop ...]");
         sb.AppendLine("#   (the <element> token here is the value in column 2; the per-row ex:--prop ... shows one valid --prop for that row)");
+            sb.AppendLine("# Machine-readable: append --jsonl for one JSON record per line (for jq / scripts).");
         // Tips below intentionally use the literal column tokens (PROP / ELEM)
         // so users can copy-paste them. The leading '#' makes them easy to
         // strip with `grep -v '^#'` if the self-match line is unwanted.
-        sb.AppendLine("# Tips: grep '^docx paragraph'  |  grep ' PROP '  |  grep alignment  |  grep aliases:halign");
+        sb.AppendLine("# Tips: grep '^docx paragraph'  |  grep '  PROP  '  |  grep alignment  |  grep aliases:halign");
         sb.AppendLine();
 
         foreach (var format in SchemaHelpLoader.ListFormats())
@@ -87,10 +88,25 @@ internal static class SchemaHelpFlatRenderer
     internal static string RenderAllJsonl(string? onlyFormat = null)
     {
         var sb = new StringBuilder();
+        sb.AppendLine(BuildMetaRecord().ToJsonString(JsonlOptions));
         foreach (var record in EnumerateRecords(onlyFormat))
             sb.AppendLine(record.ToJsonString(JsonlOptions));
         return sb.ToString();
     }
+
+    private static JsonObject BuildMetaRecord() => new()
+    {
+        ["kind"] = "meta",
+        ["ops_legend"] = new JsonObject
+        {
+            ["a"] = "add",
+            ["s"] = "set",
+            ["g"] = "get",
+            ["q"] = "query",
+            ["r"] = "remove",
+            ["-"] = "not supported",
+        },
+    };
 
     /// <summary>
     /// JSON-array variant: returns the same per-record schema as
@@ -198,7 +214,7 @@ internal static class SchemaHelpFlatRenderer
             var desc = TryGetString(prop.Value, "description")
                        ?? TryGetString(prop.Value, "readback");
             if (!string.IsNullOrEmpty(desc))
-                obj["description"] = SingleLine(desc!, 120);
+                obj["description"] = SingleLine(desc!, int.MaxValue);
 
             if (prop.Value.TryGetProperty("examples", out var examples)
                 && examples.ValueKind == JsonValueKind.Array)
@@ -215,13 +231,27 @@ internal static class SchemaHelpFlatRenderer
     private static List<string> CollectPaths(JsonElement root)
     {
         var parts = new List<string>();
-        if (!root.TryGetProperty("paths", out var paths)
-            || paths.ValueKind != JsonValueKind.Object) return parts;
-        foreach (var kind in new[] { "stable", "positional" })
+        if (root.TryGetProperty("paths", out var paths)
+            && paths.ValueKind == JsonValueKind.Object)
         {
-            if (paths.TryGetProperty(kind, out var arr) && arr.ValueKind == JsonValueKind.Array)
-                foreach (var p in arr.EnumerateArray())
-                    if (p.ValueKind == JsonValueKind.String) parts.Add(p.GetString()!);
+            foreach (var kind in new[] { "stable", "positional" })
+            {
+                if (paths.TryGetProperty(kind, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                    foreach (var p in arr.EnumerateArray())
+                        if (p.ValueKind == JsonValueKind.String) parts.Add(p.GetString()!);
+            }
+        }
+        // Some elements (e.g. chart-axis) express their path form via
+        // addressing.pathForm rather than paths.stable/positional. Surface it
+        // alongside paths so consumers don't have to special-case the schema
+        // shape.
+        if (root.TryGetProperty("addressing", out var addressing)
+            && addressing.ValueKind == JsonValueKind.Object
+            && addressing.TryGetProperty("pathForm", out var pathForm)
+            && pathForm.ValueKind == JsonValueKind.String)
+        {
+            var pf = pathForm.GetString();
+            if (!string.IsNullOrEmpty(pf) && !parts.Contains(pf!)) parts.Add(pf!);
         }
         return parts;
     }
@@ -340,15 +370,7 @@ internal static class SchemaHelpFlatRenderer
 
     private static string FormatPaths(JsonElement root)
     {
-        if (!root.TryGetProperty("paths", out var paths)
-            || paths.ValueKind != JsonValueKind.Object) return "";
-        var parts = new List<string>();
-        foreach (var kind in new[] { "stable", "positional" })
-        {
-            if (paths.TryGetProperty(kind, out var arr) && arr.ValueKind == JsonValueKind.Array)
-                foreach (var p in arr.EnumerateArray())
-                    if (p.ValueKind == JsonValueKind.String) parts.Add(p.GetString()!);
-        }
+        var parts = CollectPaths(root);
         return string.Join(";", parts);
     }
 
