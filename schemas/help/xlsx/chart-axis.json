@@ -24,6 +24,8 @@
     "format":         { "type": "string", "description": "number format string", "set": true, "get": true, "examples": ["--prop format=\"#,##0\""], "enforcement": "report" },
     "labelRotation":  { "type": "number", "description": "tick label rotation in degrees", "set": true, "get": true, "examples": ["--prop labelRotation=-45"], "enforcement": "report" },
     "majorGridlines": { "type": "bool",   "description": "show or hide major gridlines. Applies to all roles.", "set": true, "get": true, "examples": ["--prop majorGridlines=true"], "enforcement": "report" },
-    "minorGridlines": { "type": "bool",   "description": "show or hide minor gridlines. Applies to all roles.", "set": true, "get": true, "examples": ["--prop minorGridlines=false"], "enforcement": "report" }
+    "minorGridlines": { "type": "bool",   "description": "show or hide minor gridlines. Applies to all roles.", "set": true, "get": true, "examples": ["--prop minorGridlines=false"], "enforcement": "report" },
+    "majorUnit": { "type":"number", "add":false, "set":true, "get":true, "description":"major tick interval on the value axis. Applies to role=value|value2.", "readback":"numeric interval", "examples":["--prop majorUnit=20"], "enforcement":"report" },
+    "minorUnit": { "type":"number", "add":false, "set":true, "get":true, "description":"minor tick interval on the value axis. Applies to role=value|value2.", "readback":"numeric interval", "examples":["--prop minorUnit=5"], "enforcement":"report" }
   }
 }

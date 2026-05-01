@@ -158,6 +158,14 @@
       "examples": ["--prop lineNumbers=continuous"],
       "readback": "one of values",
       "enforcement": "strict"
-    }
+    },
+    "headerRef": { "type":"string", "add":false, "set":false, "get":true, "description":"path to primary (default) header part. Convenience shortcut equal to headerRef.default when present.", "readback":"OOXML part path", "enforcement":"report" },
+    "headerRef.default": { "type":"string", "add":false, "set":false, "get":true, "description":"path to default-type header part.", "readback":"OOXML part path", "enforcement":"report" },
+    "headerRef.first": { "type":"string", "add":false, "set":false, "get":true, "description":"path to first-page-only header part.", "readback":"OOXML part path", "enforcement":"report" },
+    "headerRef.even": { "type":"string", "add":false, "set":false, "get":true, "description":"path to even-page header part.", "readback":"OOXML part path", "enforcement":"report" },
+    "footerRef": { "type":"string", "add":false, "set":false, "get":true, "description":"path to primary (default) footer part. Convenience shortcut equal to footerRef.default when present.", "readback":"OOXML part path", "enforcement":"report" },
+    "footerRef.default": { "type":"string", "add":false, "set":false, "get":true, "description":"path to default-type footer part.", "readback":"OOXML part path", "enforcement":"report" },
+    "footerRef.first": { "type":"string", "add":false, "set":false, "get":true, "description":"path to first-page-only footer part.", "readback":"OOXML part path", "enforcement":"report" },
+    "footerRef.even": { "type":"string", "add":false, "set":false, "get":true, "description":"path to even-page footer part.", "readback":"OOXML part path", "enforcement":"report" }
   }
 }

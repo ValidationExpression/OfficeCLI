@@ -136,6 +136,7 @@
       "examples": ["--prop followedhyperlink=#954F72"],
       "readback": "#-prefixed uppercase hex",
       "enforcement": "report"
-    }
+    },
+    "name": { "type":"string", "add":false, "set":false, "get":true, "description":"theme color scheme name (e.g. 'Office'). Emitted when the theme carries a named color scheme.", "readback":"scheme name string", "enforcement":"report" }
   }
 }

@@ -343,7 +343,14 @@
       "add": false, "set": true, "get": false,
       "readback": "n/a (set-only)",
       "enforcement": "report"
-    }
+    },
+    "pageWidth": { "type":"length", "add":false, "set":true, "get":true, "description":"convenience readback from sectPr; primary edit path is /section[N].", "readback":"length in cm (e.g. \"21cm\")", "examples":["--prop pageWidth=21cm"], "enforcement":"report" },
+    "pageHeight": { "type":"length", "add":false, "set":true, "get":true, "description":"convenience readback from sectPr; primary edit path is /section[N].", "readback":"length in cm (e.g. \"29.7cm\")", "examples":["--prop pageHeight=29.7cm"], "enforcement":"report" },
+    "orientation": { "type":"enum", "values":["portrait","landscape"], "add":false, "set":true, "get":true, "description":"convenience readback from sectPr; primary edit path is /section[N].", "readback":"orientation token", "examples":["--prop orientation=landscape"], "enforcement":"report" },
+    "marginTop": { "type":"length", "add":false, "set":true, "get":true, "description":"convenience readback from sectPr; primary edit path is /section[N].", "readback":"length in cm", "examples":["--prop marginTop=2.54cm"], "enforcement":"report" },
+    "marginBottom": { "type":"length", "add":false, "set":true, "get":true, "description":"convenience readback from sectPr; primary edit path is /section[N].", "readback":"length in cm", "examples":["--prop marginBottom=2.54cm"], "enforcement":"report" },
+    "marginLeft": { "type":"length", "add":false, "set":true, "get":true, "description":"convenience readback from sectPr; primary edit path is /section[N].", "readback":"length in cm", "examples":["--prop marginLeft=3.18cm"], "enforcement":"report" },
+    "marginRight": { "type":"length", "add":false, "set":true, "get":true, "description":"convenience readback from sectPr; primary edit path is /section[N].", "readback":"length in cm", "examples":["--prop marginRight=3.18cm"], "enforcement":"report" }
   },
   "children": [
     { "element": "body",      "pathSegment": "body",      "cardinality": "1" },
