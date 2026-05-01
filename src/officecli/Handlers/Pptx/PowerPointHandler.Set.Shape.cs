@@ -442,7 +442,17 @@ public partial class PowerPointHandler
                     var spPr = cxn.ShapeProperties ?? (cxn.ShapeProperties = new ShapeProperties());
                     var prstGeom = spPr.GetFirstChild<Drawing.PresetGeometry>()
                         ?? spPr.AppendChild(new Drawing.PresetGeometry());
-                    prstGeom.Preset = new Drawing.ShapeTypeValues(value);
+                    // CONSISTENCY(connector-shape-aliases): mirror Add.Misc.cs —
+                    // accept short canonical names (straight/elbow/curve) plus
+                    // OOXML full names (incl. 2-segment forms which fold to 3-segment).
+                    var resolvedShape = value.ToLowerInvariant() switch
+                    {
+                        "straight" or "straightconnector1" or "line" => Drawing.ShapeTypeValues.StraightConnector1,
+                        "elbow" or "bentconnector3" or "bentconnector2" => Drawing.ShapeTypeValues.BentConnector3,
+                        "curve" or "curvedconnector3" or "curvedconnector2" => Drawing.ShapeTypeValues.CurvedConnector3,
+                        _ => new Drawing.ShapeTypeValues(value),
+                    };
+                    prstGeom.Preset = resolvedShape;
                     break;
                 }
                 case "headend" or "headEnd":

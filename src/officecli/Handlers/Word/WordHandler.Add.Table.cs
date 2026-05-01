@@ -321,6 +321,17 @@ public partial class WordHandler
             if (!key.Contains('.')) continue;
             var tcPr = newCell.GetFirstChild<TableCellProperties>();
             var lazyTcPr = tcPr ?? new TableCellProperties();
+            // CONSISTENCY(add-set-symmetry): route border.{top,bottom,left,
+            // right,all,tl2br,tr2bl} through the same ApplyCellBorders helper
+            // Set uses, instead of falling through to TypedAttributeFallback
+            // which doesn't model border.* and would mis-flag UNSUPPORTED.
+            if (key.StartsWith("border.", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("border", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyCellBorders(lazyTcPr, key, value);
+                if (tcPr == null) newCell.PrependChild(lazyTcPr);
+                continue;
+            }
             if (Core.TypedAttributeFallback.TrySet(lazyTcPr, key, value))
             {
                 if (tcPr == null) newCell.PrependChild(lazyTcPr);

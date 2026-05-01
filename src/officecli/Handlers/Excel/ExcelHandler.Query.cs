@@ -449,7 +449,7 @@ public partial class ExcelHandler
 
             var cf = cfElements[cfIdx - 1];
             var cfNode = new DocumentNode { Path = path, Type = "conditionalFormatting" };
-            cfNode.Format["sqref"] = cf.SequenceOfReferences?.InnerText ?? "";
+            cfNode.Format["ref"] = cf.SequenceOfReferences?.InnerText ?? "";
 
             var rule = cf.Elements<ConditionalFormattingRule>().FirstOrDefault();
             if (rule != null)
@@ -504,14 +504,14 @@ public partial class ExcelHandler
                         var minRgb = colors[0].Rgb?.Value;
                         var maxRgb = colors[^1].Rgb?.Value;
                         if (!string.IsNullOrEmpty(minRgb))
-                            cfNode.Format["mincolor"] = ParseHelpers.FormatHexColor(minRgb);
+                            cfNode.Format["minColor"] = ParseHelpers.FormatHexColor(minRgb);
                         if (!string.IsNullOrEmpty(maxRgb))
-                            cfNode.Format["maxcolor"] = ParseHelpers.FormatHexColor(maxRgb);
+                            cfNode.Format["maxColor"] = ParseHelpers.FormatHexColor(maxRgb);
                         if (colors.Count >= 3)
                         {
                             var midRgb = colors[1].Rgb?.Value;
                             if (!string.IsNullOrEmpty(midRgb))
-                                cfNode.Format["midcolor"] = ParseHelpers.FormatHexColor(midRgb);
+                                cfNode.Format["midColor"] = ParseHelpers.FormatHexColor(midRgb);
                         }
                     }
                 }
@@ -587,9 +587,9 @@ public partial class ExcelHandler
                         cfNode.Format["operator"] = rule.Operator.InnerText;
                     var cellIsFormulas = rule.Elements<Formula>().ToList();
                     if (cellIsFormulas.Count >= 1)
-                        cfNode.Format["formula"] = cellIsFormulas[0].Text ?? "";
+                        cfNode.Format["value"] = cellIsFormulas[0].Text ?? "";
                     if (cellIsFormulas.Count >= 2)
-                        cfNode.Format["formula2"] = cellIsFormulas[1].Text ?? "";
+                        cfNode.Format["value2"] = cellIsFormulas[1].Text ?? "";
                     if (rule.FormatId?.Value != null) cfNode.Format["dxfId"] = rule.FormatId.Value;
                 }
 

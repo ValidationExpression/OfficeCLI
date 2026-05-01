@@ -253,6 +253,28 @@
       "examples": ["--prop type=formula --prop formula=ISERROR(A1)"],
       "readback": "formula expression",
       "enforcement": "report"
+    },
+    "ruleType": {
+      "type": "string",
+      "description": "Get-only readback of the underlying OOXML CT_CfRule@type (e.g. cellIs, colorScale, dataBar, iconSet, expression, top10, aboveAverage, duplicateValues, uniqueValues, containsText, timePeriod). Distinct from 'cfType' which is the higher-level family token.",
+      "add": false, "set": false, "get": true,
+      "readback": "OOXML cfRule@type token",
+      "enforcement": "report"
+    },
+    "cfType": {
+      "type": "enum",
+      "values": ["dataBar", "colorScale", "iconSet", "formula", "topN", "aboveAverage", "duplicateValues", "uniqueValues", "containsText", "cellIs", "timePeriod"],
+      "description": "Get-only readback of the high-level CF family (camelCase). Set by Get based on which OOXML child element is present on the rule.",
+      "add": false, "set": false, "get": true,
+      "readback": "camelCase family token",
+      "enforcement": "report"
+    },
+    "dxfId": {
+      "type": "int",
+      "description": "Get-only readback of the differential format index referenced by this rule (links to the workbook-level dxfs table).",
+      "add": false, "set": false, "get": true,
+      "readback": "0-based dxf index",
+      "enforcement": "report"
     }
   }
 }

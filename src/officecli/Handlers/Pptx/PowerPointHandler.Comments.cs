@@ -204,8 +204,8 @@ public partial class PowerPointHandler
         var pos = comment.GetFirstChild<Position>();
         if (pos != null)
         {
-            node.Format["x"] = pos.X?.Value ?? 0;
-            node.Format["y"] = pos.Y?.Value ?? 0;
+            node.Format["x"] = EmuConverter.FormatEmu(pos.X?.Value ?? 0);
+            node.Format["y"] = EmuConverter.FormatEmu(pos.Y?.Value ?? 0);
         }
         return node;
     }

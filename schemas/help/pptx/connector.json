@@ -17,10 +17,11 @@
   "properties": {
     "shape": {
       "type": "enum",
-      "values": ["line", "straightConnector1", "bentConnector2", "bentConnector3", "curvedConnector2", "curvedConnector3"],
+      "values": ["straight", "elbow", "curve"],
+      "description": "Connector geometry preset. Add/Set accept the short names (straight, elbow, curve) or OOXML full names (straightConnector1, bentConnector2, bentConnector3, curvedConnector2, curvedConnector3 — bent/curved 2-segment forms map to the 3-segment primitive). Get readback returns the OOXML full name.",
       "add": true, "set": true, "get": true,
-      "examples": ["--prop shape=straightConnector1"],
-      "readback": "geometry preset name",
+      "examples": ["--prop shape=straight", "--prop shape=elbow", "--prop shape=curve"],
+      "readback": "OOXML preset full name (straightConnector1, bentConnector3, curvedConnector3)",
       "enforcement": "report"
     },
     "from": {

@@ -77,10 +77,14 @@ public partial class PowerPointHandler
                         Preset = (properties.GetValueOrDefault("shape")
                                   ?? properties.GetValueOrDefault("preset", "straightConnector1")).ToLowerInvariant() switch
                         {
-                            "straight" or "straightconnector1" => Drawing.ShapeTypeValues.StraightConnector1,
-                            "elbow" or "bentconnector3" => Drawing.ShapeTypeValues.BentConnector3,
-                            "curve" or "curvedconnector3" => Drawing.ShapeTypeValues.CurvedConnector3,
-                            _ => throw new ArgumentException($"Invalid connector shape: '{properties.GetValueOrDefault("shape") ?? properties.GetValueOrDefault("preset", "straightConnector1")}'. Valid values: straight, elbow, curve.")
+                            // Short canonical names + OOXML full names. "line" is a
+                            // historical schema alias for the straight preset; bent/curved
+                            // accept either the 2-segment or 3-segment OOXML variant
+                            // (PowerPoint maps both to the same drawing primitive set).
+                            "straight" or "straightconnector1" or "line" => Drawing.ShapeTypeValues.StraightConnector1,
+                            "elbow" or "bentconnector3" or "bentconnector2" => Drawing.ShapeTypeValues.BentConnector3,
+                            "curve" or "curvedconnector3" or "curvedconnector2" => Drawing.ShapeTypeValues.CurvedConnector3,
+                            _ => throw new ArgumentException($"Invalid connector shape: '{properties.GetValueOrDefault("shape") ?? properties.GetValueOrDefault("preset", "straightConnector1")}'. Valid values: straight, elbow, curve (or OOXML full names: straightConnector1, bentConnector3, curvedConnector3).")
                         }
                     }
                 );
