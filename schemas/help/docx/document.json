@@ -230,6 +230,119 @@
       "add": false, "set": true, "get": true,
       "readback": "1.5x or Npt",
       "enforcement": "report"
+    },
+    "autoSpaceDE": {
+      "type": "bool",
+      "description": "auto-spacing between East Asian and Latin text.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "autoSpaceDN": {
+      "type": "bool",
+      "description": "auto-spacing between East Asian and numeric text.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "kinsoku": {
+      "type": "bool",
+      "description": "Japanese kinsoku line breaking rules.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "overflowPunct": {
+      "type": "bool",
+      "description": "allow punctuation to overflow margin.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "embedFonts": {
+      "type": "bool",
+      "description": "embed TrueType fonts.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "embedSystemFonts": {
+      "type": "bool",
+      "description": "embed system fonts.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "saveSubsetFonts": {
+      "type": "bool",
+      "description": "save font subsets.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "mirrorMargins": {
+      "type": "bool",
+      "description": "mirror margins for facing pages.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "gutterAtTop": {
+      "type": "bool",
+      "description": "gutter at top.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "bookFoldPrinting": {
+      "type": "bool",
+      "description": "book fold printing layout.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "evenAndOddHeaders": {
+      "type": "bool",
+      "description": "different headers for even/odd pages.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "defaultTabStop": {
+      "type": "string",
+      "description": "default tab stop (e.g. \"720\" twips or \"0.5in\").",
+      "add": false, "set": true, "get": false,
+      "examples": ["--prop defaultTabStop=720", "--prop defaultTabStop=0.5in"],
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "displayBackgroundShape": {
+      "type": "bool",
+      "description": "display background shape.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "removePersonalInformation": {
+      "type": "bool",
+      "description": "remove personal info on save.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "removeDateAndTime": {
+      "type": "bool",
+      "description": "remove date/time on save.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "printFormsData": {
+      "type": "bool",
+      "description": "print only form data.",
+      "add": false, "set": true, "get": false,
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
     }
   },
   "children": [

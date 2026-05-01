@@ -108,6 +108,22 @@
       "readback": "n/a (hash not exposed on Get)",
       "enforcement": "report"
     },
+    "printTitleRows": {
+      "type": "string",
+      "description": "rows to repeat at top of every printed page (e.g. 1:1).",
+      "add": false, "set": true, "get": false,
+      "examples": ["--prop printTitleRows=1:1"],
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
+    "printTitleCols": {
+      "type": "string",
+      "description": "columns to repeat at left of every printed page (e.g. A:A).",
+      "add": false, "set": true, "get": false,
+      "examples": ["--prop printTitleCols=A:A"],
+      "readback": "n/a (set-only)",
+      "enforcement": "report"
+    },
     "orientation": {
       "type": "string",
       "description": "PageSetup orientation (portrait | landscape). Emitted only when set on the sheet.",
@@ -131,8 +147,9 @@
     },
     "printArea": {
       "type": "string",
-      "description": "defined-name _xlnm.Print_Area for this sheet, with the leading 'SheetName!' prefix stripped so the value round-trips as an A1 range.",
-      "add": false, "set": false, "get": true,
+      "description": "defined-name _xlnm.Print_Area for this sheet. Get returns the A1 range with the leading 'SheetName!' prefix stripped. On Set: pass an A1 range (e.g. A1:C20) or `none` to clear.",
+      "add": false, "set": true, "get": true,
+      "examples": ["--prop printArea=A1:C20", "--prop printArea=none"],
       "readback": "A1 range string",
       "enforcement": "report"
     },
