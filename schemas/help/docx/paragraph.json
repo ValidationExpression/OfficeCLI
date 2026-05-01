@@ -946,8 +946,8 @@
       "description": "paragraph border edge descriptor. Emitted only when present.",
       "add": false,
       "set": false,
-      "get": true,
-      "readback": "border descriptor",
+      "get": false,
+      "readback": "n/a (handler does not surface paragraph borders today)",
       "enforcement": "report"
     },
     "pbdr.bottom": {
@@ -955,8 +955,8 @@
       "description": "paragraph border edge descriptor. Emitted only when present.",
       "add": false,
       "set": false,
-      "get": true,
-      "readback": "border descriptor",
+      "get": false,
+      "readback": "n/a (handler does not surface paragraph borders today)",
       "enforcement": "report"
     },
     "pbdr.left": {
@@ -964,8 +964,8 @@
       "description": "paragraph border edge descriptor. Emitted only when present.",
       "add": false,
       "set": false,
-      "get": true,
-      "readback": "border descriptor",
+      "get": false,
+      "readback": "n/a (handler does not surface paragraph borders today)",
       "enforcement": "report"
     },
     "pbdr.right": {
@@ -973,8 +973,8 @@
       "description": "paragraph border edge descriptor. Emitted only when present.",
       "add": false,
       "set": false,
-      "get": true,
-      "readback": "border descriptor",
+      "get": false,
+      "readback": "n/a (handler does not surface paragraph borders today)",
       "enforcement": "report"
     },
     "pbdr.between": {
@@ -982,8 +982,8 @@
       "description": "paragraph border edge descriptor. Emitted only when present.",
       "add": false,
       "set": false,
-      "get": true,
-      "readback": "border descriptor",
+      "get": false,
+      "readback": "n/a (handler does not surface paragraph borders today)",
       "enforcement": "report"
     },
     "pbdr.bar": {
@@ -991,8 +991,8 @@
       "description": "paragraph border edge descriptor. Emitted only when present.",
       "add": false,
       "set": false,
-      "get": true,
-      "readback": "border descriptor",
+      "get": false,
+      "readback": "n/a (handler does not surface paragraph borders today)",
       "enforcement": "report"
     },
     "firstLineChars": {

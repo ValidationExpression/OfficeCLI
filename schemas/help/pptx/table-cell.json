@@ -115,13 +115,13 @@
       "description": "diagonal from top-left to bottom-right (a:lnTlToBr). Format same as border.all. Cross-format note: docx only accepts the semicolon form 'STYLE;SIZE;COLOR' — pptx is more lenient. Add/Set only — Get does not surface diagonal borders today.",
       "add": true,
       "set": true,
-      "get": true,
+      "get": false,
       "examples": [
         "--prop border.tl2br=\"1pt solid FF0000\"",
         "--prop border.tl2br=\"single;4;FF0000\""
       ],
       "enforcement": "report",
-      "readback": "edge descriptor (e.g. 'solid;4;FF0000')"
+      "readback": "n/a (Get does not surface diagonal borders)"
     },
     "border.top": {
       "type": "string",
@@ -141,13 +141,13 @@
       "description": "diagonal from top-right to bottom-left (a:lnBlToTr). Format same as border.all. Cross-format note: docx only accepts the semicolon form 'STYLE;SIZE;COLOR' — pptx is more lenient. Add/Set only — Get does not surface diagonal borders today.",
       "add": true,
       "set": true,
-      "get": true,
+      "get": false,
       "examples": [
         "--prop border.tr2bl=\"1pt solid FF0000\"",
         "--prop border.tr2bl=\"single;4;FF0000\""
       ],
       "enforcement": "report",
-      "readback": "edge descriptor (e.g. 'solid;4;FF0000')"
+      "readback": "n/a (Get does not surface diagonal borders)"
     }
   }
 }

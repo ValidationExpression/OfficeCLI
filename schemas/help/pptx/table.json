@@ -220,13 +220,13 @@
       ],
       "add": true,
       "set": true,
-      "get": true,
+      "get": false,
       "examples": [
         "--prop border.horizontal=\"1pt solid CCCCCC\"",
         "--prop border.horizontal=\"single;4;CCCCCC\""
       ],
       "enforcement": "report",
-      "readback": "edge descriptor"
+      "readback": "n/a (PPT has no native inside-border emit on Get)"
     },
     "border.left": {
       "type": "string",
@@ -276,13 +276,13 @@
       ],
       "add": true,
       "set": true,
-      "get": true,
+      "get": false,
       "examples": [
         "--prop border.vertical=\"1pt solid CCCCCC\"",
         "--prop border.vertical=\"single;4;CCCCCC\""
       ],
       "enforcement": "report",
-      "readback": "edge descriptor"
+      "readback": "n/a (PPT has no native inside-border emit on Get)"
     }
   }
 }
