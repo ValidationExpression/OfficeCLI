@@ -628,7 +628,7 @@ internal static partial class ChartHelper
                     // After round-trip, SDK may deserialize ChartShapeProperties as ShapeProperties
                     var cSpPr = chartSpace!.GetFirstChild<C.ChartShapeProperties>()
                         ?? (OpenXmlCompositeElement?)chartSpace.GetFirstChild<C.ShapeProperties>();
-                    if (cSpPr == null) { cSpPr = new C.ChartShapeProperties(); chartSpace.InsertAfter(cSpPr, chart); }
+                    if (cSpPr == null) { cSpPr = new C.ShapeProperties(); chartSpace.InsertAfter(cSpPr, chart); }
                     // Replace fill but keep outline
                     cSpPr.RemoveAllChildren<Drawing.SolidFill>();
                     cSpPr.RemoveAllChildren<Drawing.GradientFill>();
@@ -1629,7 +1629,7 @@ internal static partial class ChartHelper
                 {
                     var cSpPr = chartSpace!.GetFirstChild<C.ChartShapeProperties>()
                         ?? (OpenXmlCompositeElement?)chartSpace.GetFirstChild<C.ShapeProperties>();
-                    if (cSpPr == null) { cSpPr = new C.ChartShapeProperties(); chartSpace.InsertAfter(cSpPr, chart); }
+                    if (cSpPr == null) { cSpPr = new C.ShapeProperties(); chartSpace.InsertAfter(cSpPr, chart); }
                     cSpPr.RemoveAllChildren<Drawing.Outline>();
                     if (!value.Equals("none", StringComparison.OrdinalIgnoreCase))
                         cSpPr.AppendChild(BuildOutlineElement(value));
