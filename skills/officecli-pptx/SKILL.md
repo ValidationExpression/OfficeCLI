@@ -406,14 +406,15 @@ officecli set "$FILE" "/slide[7]/shape[@name=DocsBtn]" --prop link=https://examp
 
 ### Deck-level recipes
 
-Six patterns that aren't obvious from the primitives: (a) cover + section divider, (b) chart + commentary, (c) 4-step flowchart, (d) 10-slide board-review skeleton, (d′) 20-slide Series B / pitch-deck skeleton, (e) KPI callouts, (f) YES/NO decision tree. Each describes the **visual outcome** first, then a runnable block. `$FILE` stands in for your filename.
+Patterns not obvious from the primitives. Each gives the **visual outcome** first, then a runnable block. `$FILE` = your filename. Use `/slide[last()]` to address the slide you just added.
 
-#### (a) Executive cover + section divider
+**Z-order.** Later-added shapes are on top. Add background decoration FIRST, titles LAST. To fix after the fact: `--prop zorder=back/front` (renumbers siblings — re-`get --depth 1` before stacking more).
 
-**Visual outcome.** Cover: dark navy fill, centered 44pt title, 18pt ice-blue meta line. Section divider: same dark fill, large translucent "02" (120pt, 15% opacity) behind a 40pt title — the number becomes a background graphic, the title carries the message.
+#### (a) Cover (and section divider)
+
+**Visual outcome.** Dark navy fill, centered 44pt title, 18pt ice-blue meta line.
 
 ```bash
-# Cover
 officecli add "$FILE" / --type slide --prop layout=blank --prop background=1E2761
 officecli add "$FILE" "/slide[last()]" --type shape --prop text="Strategic Growth Review" \
   --prop x=2cm --prop y=7cm --prop width=29.87cm --prop height=3cm \
@@ -421,22 +422,13 @@ officecli add "$FILE" "/slide[last()]" --type shape --prop text="Strategic Growt
 officecli add "$FILE" "/slide[last()]" --type shape --prop text="Prepared for Acme Leadership — FY26 Outlook" \
   --prop x=2cm --prop y=11cm --prop width=29.87cm --prop height=1.2cm \
   --prop font=Calibri --prop size=18 --prop color=CADCFC --prop align=center
-
-# Section divider — translucent number added FIRST (stays behind), title last (stays on top)
-officecli add "$FILE" / --type slide --prop layout=blank --prop background=1E2761
-officecli add "$FILE" "/slide[last()]" --type shape --prop text="02" \
-  --prop x=2cm --prop y=3cm --prop width=29.87cm --prop height=10cm \
-  --prop font=Georgia --prop size=120 --prop bold=true --prop color=FFFFFF --prop opacity=0.15 --prop align=center
-officecli add "$FILE" "/slide[last()]" --type shape --prop text="Financial Performance" \
-  --prop x=2cm --prop y=7.5cm --prop width=29.87cm --prop height=2.5cm \
-  --prop font=Georgia --prop size=40 --prop bold=true --prop color=FFFFFF --prop align=center
 ```
 
-**Z-order.** Later-added shapes are on top. Add background decoration FIRST, titles LAST. If the order got flipped, fix with `--prop zorder=back/front` — but that renumbers siblings, so re-`get --depth 1` before stacking more.
+**Section divider** = same cover, plus a giant translucent number (`size=120`, `opacity=0.15`) added FIRST so it sits behind the section title.
 
 #### (b) Data slide (chart + commentary block)
 
-**Visual outcome.** Left two-thirds: column chart with brand series colors. Right one-third: a "Key Insight" card with 20pt heading and 18pt body — the audience reads the takeaway before parsing the bars.
+**Visual outcome.** Left two-thirds: column chart with brand series colors. Right one-third: "Key Insight" card with 20pt heading + 18pt body — audience reads the takeaway before parsing the bars.
 
 ```bash
 officecli add "$FILE" / --type slide --prop layout=blank --prop background=FFFFFF
@@ -450,7 +442,7 @@ officecli add "$FILE" "/slide[last()]" --type chart --prop chartType=column \
   --prop series2.name=Plan --prop series2.values="40,42,45,48" --prop series2.color=CADCFC \
   --prop categories="Q1,Q2,Q3,Q4" --prop x=1.5cm --prop y=3.5cm --prop width=20cm --prop height=14cm --prop title='FY26 Revenue ($M)'
 
-# Commentary card — right 1/3: background + heading shape + body shape
+# Commentary card — right 1/3: background + heading + body
 officecli add "$FILE" "/slide[last()]" --type shape --prop preset=roundRect --prop fill=F5F7FA --prop line=none \
   --prop x=22.5cm --prop y=3.5cm --prop width=9.8cm --prop height=14cm
 officecli add "$FILE" "/slide[last()]" --type shape --prop text="Key Insight" \
@@ -459,45 +451,29 @@ officecli add "$FILE" "/slide[last()]" --type shape --prop text="Key Insight" \
 officecli add "$FILE" "/slide[last()]" --type shape --prop text="EMEA launch + NRR at 118% drove 12pp of the 18pp beat." \
   --prop x=23cm --prop y=5.5cm --prop width=9cm --prop height=11cm \
   --prop font=Calibri --prop size=18 --prop color=333333
-
-officecli add "$FILE" "/slide[last()]" --type notes --prop text="Lead with the 18% beat, then the EMEA + NRR story."
 ```
 
-#### (c) Flowchart / process diagram (connectors + shapes) — batch-heredoc
+#### (c) Flowchart / process diagram (boxes + connectors)
 
-**Visual outcome.** Four rounded boxes across the slide at y=8cm, each 6cm × 3cm, connected left-to-right with elbow connectors + triangle arrowheads. Boxes alternate dominant / supporting fill. 32pt title above.
+**Visual outcome.** Four rounded boxes across at y=8cm, each 6×3cm, alternating navy/iceblue, joined by elbow connectors with triangle arrowheads.
 
-Grid math for 4 boxes across a 33.87cm slide with 1.5cm margins: `gap = (33.87 − 2·1.5 − 4·6) / 3 = 2.29cm`. Box x-positions: `1.5, 9.79, 18.08, 26.37`. **Batch heredoc is portable** (no `bc`, no bash arrays); pre-compute coordinates in the JSON.
+Grid math (4 boxes, 33.87cm slide, 1.5cm margins): `gap = (33.87 − 3 − 24) / 3 = 2.29cm`. x-positions: `1.5, 9.79, 18.08, 26.37`.
+
+Each box carries its own label via `valign=middle` (no separate overlay shape needed). Use `batch` heredoc for portable coordinate arithmetic — no `bc`, no bash arrays.
 
 ```bash
-# Use explicit slide index — [last()] is rejected in some resident versions (see Pitfalls).
-# COUNT slides via query (works on closed AND resident-open files; get --depth 0 default output is not JSON).
-N_SLIDE=$(officecli query "$FILE" 'slide' --json | jq '.data.results | length')
-officecli add "$FILE" / --type slide --prop layout=blank --prop background=FFFFFF
-SLIDE=$((N_SLIDE + 1))
-
-officecli add "$FILE" "/slide[$SLIDE]" --type shape --prop name=FlowTitle \
-  --prop text="Onboarding in 4 Steps" \
-  --prop x=1.5cm --prop y=1cm --prop width=30cm --prop height=1.8cm \
-  --prop font=Georgia --prop size=32 --prop bold=true --prop color=1E2761 --prop fill=none
-
-# 4 boxes + overlaid labels in one batch (alternating navy/iceblue fills).
 cat <<EOF | officecli batch "$FILE"
 [
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Step1","preset":"roundRect","fill":"1E2761","line":"none","x":"1.5cm","y":"8cm","width":"6cm","height":"3cm"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Step2","preset":"roundRect","fill":"CADCFC","line":"none","x":"9.79cm","y":"8cm","width":"6cm","height":"3cm"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Step3","preset":"roundRect","fill":"1E2761","line":"none","x":"18.08cm","y":"8cm","width":"6cm","height":"3cm"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Step4","preset":"roundRect","fill":"CADCFC","line":"none","x":"26.37cm","y":"8cm","width":"6cm","height":"3cm"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"text":"Step 1","x":"1.5cm","y":"8.5cm","width":"6cm","height":"1cm","font":"Georgia","size":"20","bold":"true","color":"FFFFFF","align":"center","fill":"none"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"text":"Step 2","x":"9.79cm","y":"8.5cm","width":"6cm","height":"1cm","font":"Georgia","size":"20","bold":"true","color":"1E2761","align":"center","fill":"none"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"text":"Step 3","x":"18.08cm","y":"8.5cm","width":"6cm","height":"1cm","font":"Georgia","size":"20","bold":"true","color":"FFFFFF","align":"center","fill":"none"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"text":"Step 4","x":"26.37cm","y":"8.5cm","width":"6cm","height":"1cm","font":"Georgia","size":"20","bold":"true","color":"1E2761","align":"center","fill":"none"}}
+  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Step1","preset":"roundRect","fill":"1E2761","line":"none","x":"1.5cm","y":"8cm","width":"6cm","height":"3cm","text":"Step 1","font":"Georgia","size":"20","bold":"true","color":"FFFFFF","align":"center","valign":"middle"}},
+  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Step2","preset":"roundRect","fill":"CADCFC","line":"none","x":"9.79cm","y":"8cm","width":"6cm","height":"3cm","text":"Step 2","font":"Georgia","size":"20","bold":"true","color":"1E2761","align":"center","valign":"middle"}},
+  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Step3","preset":"roundRect","fill":"1E2761","line":"none","x":"18.08cm","y":"8cm","width":"6cm","height":"3cm","text":"Step 3","font":"Georgia","size":"20","bold":"true","color":"FFFFFF","align":"center","valign":"middle"}},
+  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Step4","preset":"roundRect","fill":"CADCFC","line":"none","x":"26.37cm","y":"8cm","width":"6cm","height":"3cm","text":"Step 4","font":"Georgia","size":"20","bold":"true","color":"1E2761","align":"center","valign":"middle"}}
 ]
 EOF
 
-# Connectors. Arrowhead via --prop tailEnd=triangle on add (CLI-native).
+# Connector pattern — reuse for any box-to-box graph.
 for pair in "Step1 Step2" "Step2 Step3" "Step3 Step4"; do
-  A=$(echo $pair | cut -d' ' -f1); B=$(echo $pair | cut -d' ' -f2)
+  A=${pair% *}; B=${pair#* }
   officecli add "$FILE" "/slide[$SLIDE]" --type connector \
     --prop "from=/slide[$SLIDE]/shape[@name=$A]" \
     --prop "to=/slide[$SLIDE]/shape[@name=$B]" \
@@ -505,67 +481,27 @@ for pair in "Step1 Step2" "Step2 Step3" "Step3 Step4"; do
 done
 ```
 
-`shape=elbow` is the canonical short form. `bentConnector3` also works as storage name; `bentConnector2` is **rejected**. `query --json` wraps results in `.data.results[]` — `.[0].id` is WRONG, use `.data.results[0].format.id`.
+`shape=elbow` is canonical (`bentConnector3` also works; `bentConnector2` is rejected). `query --json` results are in `.data.results[]` — use `.data.results[0].format.id`, not `.[0].id`.
 
-#### (d) Quarterly review deck skeleton (10-slide blueprint)
+#### (d) Multi-slide deck skeletons
 
-**Visual outcome.** A board-ready narrative arc in ten slides. No copy-paste block — the structure below is the decision tree; fill each slide using recipes (a)–(c) and the Design Principles.
+No code block — it's a rhythm. **Alternate dark divider slides with white content slides** using the recipes above:
 
-| # | Slide | Layout | Recipe | Notes |
-|---|---|---|---|---|
-| 1 | Cover | full dark fill | (a) cover | Title + meta line + brand band |
-| 2 | Agenda | white fill | numbered list | 5 section titles, 24pt, left-aligned; match exactly what follows |
-| 3 | Executive summary | white fill | 3 KPI callouts | Three big numbers (60pt) across the top, one-line qualifier under each, 2-line narrative at the bottom |
-| 4 | Section divider: Financials | dark | (a) divider | Big "01" + "Financial Performance" |
-| 5 | Revenue vs plan | white | (b) chart + commentary | Column chart, insight card |
-| 6 | Margin walk | white | (b) chart + commentary | Waterfall chart, key drivers list |
-| 7 | Section divider: Growth | dark | (a) divider | Big "02" + "Growth Initiatives" |
-| 8 | GTM motion | white | (c) flowchart | 4-step process, connectors |
-| 9 | Roadmap timeline | white | timeline shapes + connectors | 4 quarters as circles on a line, one deliverable under each |
-| 10 | Thank you / next steps | dark | (a) cover variant | One bullet per next step, max 3 bullets |
-
-**Build it.** `officecli open "$FILE"` → loop the slides with the appropriate recipe → `officecli close "$FILE"` → run the Delivery Gate → spot-check in PowerPoint. A 10-slide deck assembled this way takes ~30–50 commands; use `batch` heredocs for the repetitive shapes.
-
-#### (d′) Series B / pitch deck skeleton (20-slide blueprint)
-
-**Visual outcome.** A VC-ready narrative in twenty slides. Same structure as (d) but calibrated for fundraising rhythm: problem → solution → market → product → model → traction → team → financials → ask → close.
-
-| # | Slide | Layout | Recipe | Notes |
-|---|---|---|---|---|
-| 1 | Cover | dark fill | (a) cover | Company name + one-line tagline + round/amount + date |
-| 2 | TL;DR / The Ask | dark | 3 KPI callouts | "$35M Series B · 72% GM · 4.2x LTV:CAC" style |
-| 3 | Section 01 — Problem | dark | (a) divider | Big "01" + one-line problem statement |
-| 4 | Problem data | white | (b) chart + commentary | 3 data cards + sourced footnote, "industry sells X, customers want Y" |
-| 5 | Section 02 — Solution | dark | (a) divider | Big "02" + product tagline |
-| 6 | How it works | white | (c) flowchart | 4-step product loop, connectors with arrowheads |
-| 7 | Section 03 — Market | dark | (a) divider | Big "03" + market size one-liner |
-| 8 | TAM / SAM / SOM | white | (b) chart + commentary | Column chart + "Why now" list (macro drivers) |
-| 9 | Section 04 — Product | dark | (a) divider | Big "04" + product positioning |
-| 10 | Product in three pieces | white | 3-card row | Hardware / software / marketplace, with prices |
-| 11 | Section 05 — Traction | dark | (a) divider | Big "05" + "We shipped. People stayed." |
-| 12 | ARR trajectory | white | (b) chart + commentary | Line chart + callout number |
-| 13 | Retention cohort | white | (b) chart + commentary | Cohort chart + NPS / App Store / referral stats |
-| 14 | Section 06 — Business model | dark | (a) divider | Big "06" + unit-econ summary |
-| 15 | Unit economics | white | 4 KPI callouts | CAC / LTV / GM / payback — the VC napkin slide |
-| 16 | Section 07 — Team | dark | (a) divider | Big "07" + team one-liner |
-| 17 | Founders + advisors | white | 4-card grid + advisory row | Real prior companies, real names |
-| 18 | Section 08 — Financials | dark | (a) divider | Big "08" + trajectory tagline |
-| 19 | 4-year plan | white | (b) chart + commentary | Hockey stick + honest assumptions panel |
-| 20 | The Ask / Thank you | dark | (a) cover variant | `$XX M` hero number + 3 bullet use-of-funds + contact |
-
-Parallel to (d) — swap recipes per row; each divider must appear BEFORE its section content (see Gate 3 order sanity).
+- **10-slide review:** Cover · Agenda · 3 KPI · Div01 · Chart · Chart · Div02 · Flow · Timeline · Close
+- **20-slide pitch:** same rhythm × 2, sectioned Problem · Solution · Market · Product · Traction · Model · Team · Financials · Ask
+- Every divider must appear **before** its section content (Gate 3 order sanity)
+- Cover/divider = (a); chart pages = (b); process pages = (c); KPI pages = (e); decision pages = (f)
 
 #### (e) KPI callouts — giant-number card grid
 
-**Visual outcome.** Three (or four) giant numbers across a row, each with a one-line unit sublabel + small percent-change chip + one-line takeaway underneath. This is the single most common exec-deck element.
+**Visual outcome.** Three or four giant numbers across a row; each card = unit sublabel + small percent-change chip + one-line takeaway. The single most common exec-deck element.
 
-**KPI value sizing.** 60pt Georgia bold fits ~5 chars in a 9.78cm card (`$84.2`, `118%`, `24.5`). For values that don't fit (`$84.2M`), split: `$84.2` as the big number, `USD millions` as the sublabel — never shrink the font to chase the unit suffix, it just wraps.
+**Sizing rule.** 60pt Georgia bold fits ~5 chars in a 9.78cm card (`$84.2`, `118%`, `24.5`). For longer values (`$84.2M`), split: `$84.2` as the big number, `USD millions` as the sublabel — never shrink the font to chase a unit suffix, it just wraps.
 
-Grid math for 3 cards across, 1.5cm margins, 0.76cm gap: `col_width = (33.87 − 3 − 2·0.76) / 3 = 9.78cm`. x-positions: `1.5, 12.04, 22.58`.
+Grid math (3 cards, 1.5cm margins, 0.76cm gap): `col_width = (33.87 − 3 − 1.52) / 3 = 9.78cm`. x-positions: `1.5, 12.04, 22.58`. Use accent color on a single "watch" card so risk reads in one second.
 
 ```bash
-# 2 cards demo: navy standard (left) + terracotta watch (right). Middle card at x=12.04cm
-# is the same shape as left, omitted for brevity. Each card = background + big number + sublabel + tagline.
+# Two cards: navy standard + terracotta watch. Each = bg + big number + sublabel + chip.
 cat <<EOF | officecli batch "$FILE"
 [
   {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"preset":"roundRect","fill":"1E2761","line":"none","x":"1.5cm","y":"4cm","width":"9.78cm","height":"7cm"}},
@@ -580,38 +516,22 @@ cat <<EOF | officecli batch "$FILE"
 EOF
 ```
 
-Use the accent color (terracotta here) on the single "watch" card so the audience reads risk in one second. Narrative headline above: "Beat plan on 2 of 3 metrics — CAC is the watch-item" beats "FY26 Q1 KPIs" every time.
+#### (f) Decision tree — YES/NO branching
 
-#### (f) Decision tree — YES/NO branching with diverging-then-converging edges
-
-**Visual outcome.** A decision diamond at the top; two child boxes (YES / NO path) diverging left-right; each path converges to a shared terminal box. Used for LOTO / chemical / fire safety training, compliance triage, escalation rules.
-
-Layout: diamond at top-center (x=13.94, y=2cm, 6×3cm). YES branch at x=3cm y=7.5cm; NO branch at x=24.87cm y=7.5cm; terminal at x=13.94cm y=13cm.
+**Visual outcome.** Diamond at top-center; YES/NO child boxes diverging left-right; both converge into a shared terminal box. Layout: diamond at `x=13.94, y=2cm, 6×3cm`; YES at `3cm, 7.5cm`; NO at `22.87cm, 7.5cm`; terminal at `13.94cm, 13cm`. Convention: red = stop/escalate, blue = standard, green = safe terminal. **Every connector needs an arrowhead** — readers misparse direction otherwise.
 
 ```bash
-# Each box carries its own text via valign=middle (no separate text-overlay shape).
 cat <<EOF | officecli batch "$FILE"
 [
   {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Decide","preset":"diamond","fill":"1E2761","line":"none","x":"13.94cm","y":"2cm","width":"6cm","height":"3cm","text":"Hazardous energy present?","font":"Calibri","size":"14","bold":"true","color":"FFFFFF","align":"center","valign":"middle"}},
   {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"YesBox","preset":"roundRect","fill":"B85042","line":"none","x":"3cm","y":"7.5cm","width":"8cm","height":"3cm","text":"Lockout + Tagout + Verify","font":"Calibri","size":"16","bold":"true","color":"FFFFFF","align":"center","valign":"middle"}},
   {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"NoBox","preset":"roundRect","fill":"CADCFC","line":"none","x":"22.87cm","y":"7.5cm","width":"8cm","height":"3cm","text":"Proceed with standard PPE","font":"Calibri","size":"16","bold":"true","color":"1E2761","align":"center","valign":"middle"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Done","preset":"roundRect","fill":"2C5F2D","line":"none","x":"13.94cm","y":"13cm","width":"6cm","height":"2.5cm","text":"Begin service","font":"Calibri","size":"16","bold":"true","color":"FFFFFF","align":"center","valign":"middle"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"text":"YES","x":"6.5cm","y":"5.8cm","width":"2cm","height":"1cm","font":"Calibri","size":"14","bold":"true","color":"B85042","align":"center"}},
-  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"text":"NO","x":"25.5cm","y":"5.8cm","width":"2cm","height":"1cm","font":"Calibri","size":"14","bold":"true","color":"1E2761","align":"center"}}
+  {"command":"add","parent":"/slide[$SLIDE]","type":"shape","props":{"name":"Done","preset":"roundRect","fill":"2C5F2D","line":"none","x":"13.94cm","y":"13cm","width":"6cm","height":"2.5cm","text":"Begin service","font":"Calibri","size":"16","bold":"true","color":"FFFFFF","align":"center","valign":"middle"}}
 ]
 EOF
-
-# 4 connectors: Decide→YesBox, Decide→NoBox, YesBox→Done, NoBox→Done.
-for pair in "Decide YesBox" "Decide NoBox" "YesBox Done" "NoBox Done"; do
-  A=$(echo $pair | cut -d' ' -f1); B=$(echo $pair | cut -d' ' -f2)
-  officecli add "$FILE" "/slide[$SLIDE]" --type connector \
-    --prop "from=/slide[$SLIDE]/shape[@name=$A]" \
-    --prop "to=/slide[$SLIDE]/shape[@name=$B]" \
-    --prop shape=elbow --prop color=333333 --prop tailEnd=triangle
-done
 ```
 
-Color convention: red path = stop/escalate, blue path = standard-action, green terminal = safe end-state. Trainees reading a decision tree backwards is a real life-safety risk — every connector needs an arrowhead.
+Then 4 connectors (`Decide→YesBox`, `Decide→NoBox`, `YesBox→Done`, `NoBox→Done`) using the connector loop pattern from (c).
 
 ## QA (Required)
 
