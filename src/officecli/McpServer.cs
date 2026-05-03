@@ -281,7 +281,15 @@ public static class McpServer
             html = ppt.ViewAsHtml(pStart, pEnd, grid, width);
         }
         else if (handler is Handlers.ExcelHandler ex) html = ex.ViewAsHtml();
-        else if (handler is Handlers.WordHandler wh) html = wh.ViewAsHtml();
+        else if (handler is Handlers.WordHandler wh)
+        {
+            // CONSISTENCY(screenshot-default-first-page): mirror CLI — screenshot
+            // mode defaults to page 1 for docx so multi-page docs aren't silently
+            // cropped by the viewport. Caller can pass start=N to override.
+            var pageFilter = (start ?? 1).ToString();
+            if (end is int e && e >= (start ?? 1)) pageFilter = $"{start ?? 1}-{e}";
+            html = wh.ViewAsHtml(pageFilter);
+        }
 
         if (html == null)
             throw new ArgumentException("Screenshot mode is only supported for .pptx, .xlsx, and .docx files.");

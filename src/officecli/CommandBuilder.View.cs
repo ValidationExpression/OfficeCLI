@@ -20,7 +20,7 @@ static partial class CommandBuilder
         var limitOpt = new Option<int?>("--limit") { Description = "Limit number of results" };
 
         var colsOpt = new Option<string?>("--cols") { Description = "Column filter, comma-separated (Excel only, e.g. A,B,C)" };
-        var pageOpt = new Option<string?>("--page") { Description = "Page filter for html mode (e.g. 1, 2-5, 1,3,5)" };
+        var pageOpt = new Option<string?>("--page") { Description = "Page filter (e.g. 1, 2-5, 1,3,5). html mode: default=all. screenshot mode: default=1 (use --page 1-N to capture more, or --grid N for pptx thumbnails)." };
         var browserOpt = new Option<bool>("--browser") { Description = "Open output in browser (html / svg modes)" };
         var outOpt = new Option<string?>("--out", "-o") { Description = "Output file path (screenshot mode; defaults to a temp file)" };
         var screenshotWidthOpt = new Option<int>("--screenshot-width") { Description = "Screenshot viewport width (default 1600)", DefaultValueFactory = _ => 1600 };
@@ -147,16 +147,31 @@ static partial class CommandBuilder
                 // headless-screenshot the temp HTML to a PNG. Mirrors svg's pattern of
                 // a dedicated mode that produces a file + prints the path.
                 // --grid N tiles slides into an N-column thumbnail grid (pptx only).
+                //
+                // CONSISTENCY(screenshot-default-first-page): screenshot mode defaults
+                // to a single bounded visual unit (pptx → slide 1, docx → page 1, xlsx
+                // → active sheet). Without this, multi-slide/multi-page docs render
+                // the full HTML stacked vertically and get silently cropped by the
+                // viewport height (default 1200) — a footgun. To capture all
+                // slides/pages, use --page explicitly (e.g. --page 1-N) or --grid N
+                // for pptx thumbnails. xlsx is naturally first-sheet via CSS
+                // `.sheet-content { display:none }` + `.active` on sheet 0.
                 string? html = null;
                 if (handler is OfficeCli.Handlers.PowerPointHandler pptHandler)
                 {
-                    var (pStart, pEnd) = ParsePptHtmlPage(pageFilter, start, end, pptHandler);
+                    var effectiveFilter = pageFilter;
+                    if (string.IsNullOrEmpty(effectiveFilter) && start is null && end is null && gridCols == 0)
+                        effectiveFilter = "1";
+                    var (pStart, pEnd) = ParsePptHtmlPage(effectiveFilter, start, end, pptHandler);
                     html = pptHandler.ViewAsHtml(pStart, pEnd, gridCols, screenshotWidth);
                 }
                 else if (handler is OfficeCli.Handlers.ExcelHandler excelHandler)
                     html = excelHandler.ViewAsHtml();
                 else if (handler is OfficeCli.Handlers.WordHandler wordHandler)
-                    html = wordHandler.ViewAsHtml(pageFilter);
+                {
+                    var effectiveFilter = string.IsNullOrEmpty(pageFilter) ? "1" : pageFilter;
+                    html = wordHandler.ViewAsHtml(effectiveFilter);
+                }
 
                 if (html == null)
                 {

@@ -932,15 +932,26 @@ public class ResidentServer : IDisposable
         {
             string? html = null;
             var gridCols = req.GetIntArg("grid") ?? 0;
+            // CONSISTENCY(screenshot-default-first-page): mirror CommandBuilder.View.cs —
+            // screenshot mode defaults to a single bounded visual unit (pptx → slide 1,
+            // docx → page 1, xlsx → active sheet via CSS). Without this, multi-page docs
+            // render the full HTML stacked vertically and get silently cropped by the
+            // viewport height. Caller can opt into more via --page / --grid.
             if (_handler is OfficeCli.Handlers.PowerPointHandler pptShotHandler)
             {
-                var (pStart, pEnd) = ResolvePptHtmlPage(pageFilter, start, end, pptShotHandler);
+                var effectiveFilter = pageFilter;
+                if (string.IsNullOrEmpty(effectiveFilter) && start is null && end is null && gridCols == 0)
+                    effectiveFilter = "1";
+                var (pStart, pEnd) = ResolvePptHtmlPage(effectiveFilter, start, end, pptShotHandler);
                 html = pptShotHandler.ViewAsHtml(pStart, pEnd, gridCols, req.GetIntArg("screenshot-width") ?? 1600);
             }
             else if (_handler is OfficeCli.Handlers.ExcelHandler excelShotHandler)
                 html = excelShotHandler.ViewAsHtml();
             else if (_handler is OfficeCli.Handlers.WordHandler wordShotHandler)
-                html = wordShotHandler.ViewAsHtml(pageFilter);
+            {
+                var effectiveFilter = string.IsNullOrEmpty(pageFilter) ? "1" : pageFilter;
+                html = wordShotHandler.ViewAsHtml(effectiveFilter);
+            }
             if (html == null)
             {
                 Console.Error.WriteLine("Screenshot mode is only supported for .pptx, .xlsx, and .docx files.");
