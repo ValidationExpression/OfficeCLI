@@ -1239,9 +1239,34 @@ public partial class WordHandler
             ?? throw new ArgumentException(
                 $"num with id={numId} not found. Use `add /numbering --type num --prop abstractNumId=N` first.");
 
+        // BUG-R5-T1: Add and Get both support `start` / `startOverride.N`,
+        // but Set previously only handled abstractNumId — the symmetry break
+        // forced callers to delete + re-Add a num just to bump a level
+        // override. Mirror Add's parsing: `start` = shorthand for
+        // `startOverride.0`; `startOverride.N` (0..8) creates or updates the
+        // <w:lvlOverride><w:startOverride/></w:lvlOverride> child.
+        void SetStartOverride(int lvl, int startVal)
+        {
+            if (lvl < 0 || lvl > 8)
+                throw new ArgumentException($"startOverride level must be 0..8 (got {lvl}).");
+            var lvlOverride = inst.Elements<LevelOverride>()
+                .FirstOrDefault(o => o.LevelIndex?.Value == lvl);
+            if (lvlOverride == null)
+            {
+                lvlOverride = new LevelOverride { LevelIndex = lvl };
+                inst.AppendChild(lvlOverride);
+            }
+            var sov = lvlOverride.GetFirstChild<StartOverrideNumberingValue>();
+            if (sov == null)
+                lvlOverride.AppendChild(new StartOverrideNumberingValue { Val = startVal });
+            else
+                sov.Val = startVal;
+        }
+
         foreach (var (key, value) in properties)
         {
-            switch (key.ToLowerInvariant())
+            var keyLower = key.ToLowerInvariant();
+            switch (keyLower)
             {
                 case "abstractnumid":
                     var aidVal = ParseHelpers.SafeParseInt(value, "abstractNumId");
@@ -1254,8 +1279,20 @@ public partial class WordHandler
                     var aid = inst.AbstractNumId ?? (inst.AbstractNumId = new AbstractNumId());
                     aid.Val = aidVal;
                     break;
+                case "start":
+                    SetStartOverride(0, ParseHelpers.SafeParseInt(value, "start"));
+                    break;
                 default:
-                    unsupported.Add(key);
+                    if (keyLower.StartsWith("startoverride."))
+                    {
+                        var lvlStr = key.Substring("startOverride.".Length);
+                        var lvl = ParseHelpers.SafeParseInt(lvlStr, key);
+                        SetStartOverride(lvl, ParseHelpers.SafeParseInt(value, key));
+                    }
+                    else
+                    {
+                        unsupported.Add(key);
+                    }
                     break;
             }
         }
