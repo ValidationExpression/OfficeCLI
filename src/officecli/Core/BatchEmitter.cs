@@ -325,11 +325,15 @@ public static class BatchEmitter
 
     private sealed class NoteCursor { public int Index; }
 
+    private sealed record ChartSpec(Dictionary<string, object?> Format, IReadOnlyList<DocumentNode> Series);
+
     private sealed record BodyEmitContext(
         List<string> FootnoteTexts,
         List<string> EndnoteTexts,
         NoteCursor FootnoteCursor,
         NoteCursor EndnoteCursor,
+        List<ChartSpec> ChartSpecs,
+        NoteCursor ChartCursor,
         Dictionary<string, int>? ParaIdToTargetIdx);
 
     private static void EmitBody(WordHandler word, List<BatchItem> items,
@@ -343,11 +347,24 @@ public static class BatchEmitter
         // notes part. We assume notes are listed in document order matching
         // reference order — the typical case since AddFootnote/AddEndnote
         // allocate ids sequentially.
+        // Charts: query("chart") returns /chart[N] in document order, which
+        // matches the order chart-bearing runs appear in body. Pre-resolve
+        // each chart's properties + series children so EmitParagraph can
+        // emit a typed `add chart` row when it walks across each ref.
+        var charts = word.Query("chart");
+        var chartSpecs = charts.Select(c =>
+        {
+            var full = word.Get(c.Path);
+            return new ChartSpec(full.Format, full.Children ?? new List<DocumentNode>());
+        }).ToList();
+
         var ctx = new BodyEmitContext(
             FootnoteTexts: word.Query("footnote").Select(n => n.Text ?? "").ToList(),
             EndnoteTexts: word.Query("endnote").Select(n => n.Text ?? "").ToList(),
             FootnoteCursor: new NoteCursor(),
             EndnoteCursor: new NoteCursor(),
+            ChartSpecs: chartSpecs,
+            ChartCursor: new NoteCursor(),
             ParaIdToTargetIdx: paraIdToTargetIdx);
 
         int pIndex = 0, tblIndex = 0;
@@ -481,10 +498,11 @@ public static class BatchEmitter
         var paraTargetPath = $"{parentPath}/p[{targetIndex}]";
         foreach (var run in runs)
         {
-            // Picture run: ship the binary inline as a data URI through the
-            // src= prop. ImageSource.Resolve on the Add side accepts the
-            // data URI form, so the round-trip stays self-contained inside
-            // the batch JSON without an external assets directory.
+            // Drawing-bearing runs surface as type=="picture" regardless of
+            // whether the Drawing wraps an image (Blip) or a chart
+            // (c:chart). Try the image path first; if there's no embedded
+            // image part the run is a chart anchor — pull the next
+            // pre-resolved ChartSpec and emit a typed `add chart` row.
             if (run.Type == "picture")
             {
                 var binary = word.GetImageBinary(run.Path);
@@ -493,8 +511,6 @@ public static class BatchEmitter
                     var (bytes, contentType) = binary.Value;
                     var dataUri = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
                     var picProps = FilterEmittableProps(run.Format);
-                    // Drop Get-only fields that the AddPicture path neither
-                    // needs nor accepts (the SDK regenerates id/relId).
                     picProps.Remove("id");
                     picProps.Remove("contentType");
                     picProps.Remove("fileSize");
@@ -506,7 +522,25 @@ public static class BatchEmitter
                         Type = "picture",
                         Props = picProps
                     });
+                    continue;
                 }
+
+                if (ctx != null && ctx.ChartCursor.Index < ctx.ChartSpecs.Count)
+                {
+                    var spec = ctx.ChartSpecs[ctx.ChartCursor.Index];
+                    ctx.ChartCursor.Index++;
+                    var chartProps = BuildChartProps(spec);
+                    items.Add(new BatchItem
+                    {
+                        Command = "add",
+                        Parent = paraTargetPath,
+                        Type = "chart",
+                        Props = chartProps
+                    });
+                    continue;
+                }
+                // Drawing without image part and no matching chart spec —
+                // unsupported anchor (OLE/SmartArt). Skip silently.
                 continue;
             }
 
@@ -615,6 +649,36 @@ public static class BatchEmitter
                 }
             }
         }
+    }
+
+    private static Dictionary<string, string> BuildChartProps(ChartSpec spec)
+    {
+        // AddChart ingests data series via a single `data="Name1:v1,v2;Name2:v1,v2"`
+        // string. Reconstruct that string from the series children Get
+        // exposes; categories come from the chart's own Format key.
+        var props = FilterEmittableProps(spec.Format);
+        // Strip Get-only / SDK-managed keys that AddChart neither expects
+        // nor accepts.
+        props.Remove("id");
+        props.Remove("seriesCount");
+
+        // Build data="Name:v1,v2;..." from series children.
+        var seriesParts = new List<string>();
+        foreach (var s in spec.Series)
+        {
+            if (s.Type != "series") continue;
+            if (!s.Format.TryGetValue("name", out var nObj) || nObj == null) continue;
+            if (!s.Format.TryGetValue("values", out var vObj) || vObj == null) continue;
+            var name = nObj.ToString() ?? "";
+            var vals = vObj.ToString() ?? "";
+            if (name.Length == 0 || vals.Length == 0) continue;
+            seriesParts.Add($"{name}:{vals}");
+        }
+        if (seriesParts.Count > 0)
+        {
+            props["data"] = string.Join(";", seriesParts);
+        }
+        return props;
     }
 
     // Format keys that must NOT be emitted: derived (computed by Get, not
