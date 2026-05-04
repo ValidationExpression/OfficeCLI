@@ -37,12 +37,39 @@ public static class BatchEmitter
         // Phase order matters: resources first so body refs (style=Heading1,
         // numId=3, etc.) resolve when the paragraph adds reach them on replay.
         EmitStyles(word, items);
+        EmitNumberingRaw(word, items);
         EmitSection(word, items);
         EmitHeadersFooters(word, items);
         var paraIdToTargetIdx = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         EmitBody(word, items, paraIdToTargetIdx);
         EmitComments(word, items, paraIdToTargetIdx);
         return items;
+    }
+
+    private static void EmitNumberingRaw(WordHandler word, List<BatchItem> items)
+    {
+        // Numbering models list templates (abstractNum + num pairs, each
+        // abstractNum holds 9 levels with their own pPr / numFmt / lvlText).
+        // Reconstructing this through typed Add would mean another emitter
+        // in itself; for v0.5 we ship the entire <w:numbering> XML wholesale
+        // via raw-set. The blank document creates an empty numbering part,
+        // so a single replace on the part root is sufficient.
+        string xml;
+        try { xml = word.Raw("/numbering"); }
+        catch { return; }
+        if (string.IsNullOrEmpty(xml)) return;
+        // Skip when numbering is empty (just `<w:numbering/>` with no children).
+        if (!xml.Contains("<w:abstractNum") && !xml.Contains("<w:num "))
+            return;
+
+        items.Add(new BatchItem
+        {
+            Command = "raw-set",
+            Part = "/numbering",
+            Xpath = "/w:numbering",
+            Action = "replace",
+            Xml = xml
+        });
     }
 
     private static void EmitHeadersFooters(WordHandler word, List<BatchItem> items)
