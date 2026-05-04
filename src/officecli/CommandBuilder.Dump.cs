@@ -44,20 +44,29 @@ static partial class CommandBuilder
             using var word = new WordHandler(file.FullName, editable: false);
             var items = BatchEmitter.EmitWord(word);
 
-            var jsonOpts = new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-            };
+            // Compact JSON (single line) is the canonical batch wire form:
+            // `batch run` consumes it directly and AI tooling pipes it through
+            // jq/grep without caring about indentation. We previously
+            // constructed a JsonSerializerOptions{WriteIndented=true} that was
+            // never threaded into Serialize — kept the compact behavior, just
+            // dropped the dead options block.
             var output = JsonSerializer.Serialize(items, BatchJsonContext.Default.ListBatchItem);
+            var json = result.GetValue(jsonOption);
             if (outPath != null)
             {
                 File.WriteAllText(outPath, output);
-                Console.WriteLine(outPath);
+                if (json)
+                    Console.WriteLine(OutputFormatter.WrapEnvelope(
+                        "\"" + outPath.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""));
+                else
+                    Console.WriteLine(outPath);
             }
             else
             {
-                Console.WriteLine(output);
+                if (json)
+                    Console.WriteLine(OutputFormatter.WrapEnvelope(output));
+                else
+                    Console.WriteLine(output);
             }
             return 0;
         }));
