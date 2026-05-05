@@ -551,6 +551,16 @@ public partial class WordHandler
             "docproperty" => $" DOCPROPERTY \"{docPropertyName}\" ",
             "if" => BuildIfFieldInstruction(properties),
             // CONSISTENCY(field-add-symmetry): BatchEmitter.BuildFieldAddProps
+            // emits legacy form fields with fieldType=FORMTEXT / FORMCHECKBOX
+            // / FORMDROPDOWN. Without these arms the default arm threw
+            // `Unknown field type 'formtext'`, breaking dump→batch round-trips
+            // of any document containing a legacy form field. Delegate to
+            // AddFormField (the canonical /formfield handler) which builds
+            // the full FieldChar/FormFieldData/Bookmark chain.
+            "formtext" => "__FORMFIELD_DELEGATE__",
+            "formcheckbox" => "__FORMFIELD_DELEGATE__",
+            "formdropdown" => "__FORMFIELD_DELEGATE__",
+            // CONSISTENCY(field-add-symmetry): BatchEmitter.BuildFieldAddProps
             // emits HYPERLINK fields as fieldType=HYPERLINK + url/anchor (+ text),
             // never as a raw `instr`. Without a hyperlink case the default arm
             // throws `Unknown field type 'hyperlink'` and (under the new
@@ -569,6 +579,22 @@ public partial class WordHandler
             _ => GetRawFieldInstruction(properties)
                 ?? throw new ArgumentException($"Unknown field type '{effectiveType}'. Provide a known type or an 'instr' / 'instruction' / 'code' property.")
         };
+        // Form-field delegation: dump emits legacy form fields with
+        // fieldType=FORMTEXT/FORMCHECKBOX/FORMDROPDOWN. Route to AddFormField
+        // (the canonical /formfield handler) which builds the FieldChar +
+        // FormFieldData + Bookmark chain. Map fieldType → formfieldtype.
+        if (fieldInstr == "__FORMFIELD_DELEGATE__")
+        {
+            var ffProps = new Dictionary<string, string>(properties, StringComparer.OrdinalIgnoreCase);
+            ffProps["formfieldtype"] = effectiveType switch
+            {
+                "formcheckbox" => "checkbox",
+                "formdropdown" => "dropdown",
+                _ => "text",
+            };
+            return AddFormField(parent, parentPath, index, ffProps);
+        }
+
         // Allow override via property — same alias set as the no-fieldType path.
         var rawInstr = GetRawFieldInstruction(properties);
         if (rawInstr != null)
