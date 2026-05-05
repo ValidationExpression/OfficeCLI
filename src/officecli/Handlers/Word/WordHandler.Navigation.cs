@@ -235,6 +235,59 @@ public partial class WordHandler
                 if (lnNum.Start?.Value is short lnStart)
                     node.Format["lineNumberStart"] = (int)lnStart;
             }
+
+            // BUG-DUMP11-04: header / footer references (default / first /
+            // even) — mirror BuildSectionNode in WordHandler.Query.cs so
+            // Get('/') and /section[N] surface the same headerRef.<type> /
+            // footerRef.<type> keys.
+            if (mainPart != null)
+            {
+                string? primaryHeader = null;
+                foreach (var href in sectPr.Elements<HeaderReference>())
+                {
+                    if (href.Id?.Value == null) continue;
+                    var refType = href.Type?.InnerText ?? "default";
+                    try
+                    {
+                        var part = mainPart.GetPartById(href.Id.Value) as DocumentFormat.OpenXml.Packaging.HeaderPart;
+                        if (part != null)
+                        {
+                            var idx = mainPart.HeaderParts.ToList().IndexOf(part);
+                            if (idx >= 0)
+                            {
+                                var pathRef = $"/header[{idx + 1}]";
+                                node.Format[$"headerRef.{refType}"] = pathRef;
+                                if (primaryHeader == null || refType == "default") primaryHeader = pathRef;
+                            }
+                        }
+                    }
+                    catch { /* dangling rel — skip */ }
+                }
+                if (primaryHeader != null) node.Format["headerRef"] = primaryHeader;
+
+                string? primaryFooter = null;
+                foreach (var fref in sectPr.Elements<FooterReference>())
+                {
+                    if (fref.Id?.Value == null) continue;
+                    var refType = fref.Type?.InnerText ?? "default";
+                    try
+                    {
+                        var part = mainPart.GetPartById(fref.Id.Value) as DocumentFormat.OpenXml.Packaging.FooterPart;
+                        if (part != null)
+                        {
+                            var idx = mainPart.FooterParts.ToList().IndexOf(part);
+                            if (idx >= 0)
+                            {
+                                var pathRef = $"/footer[{idx + 1}]";
+                                node.Format[$"footerRef.{refType}"] = pathRef;
+                                if (primaryFooter == null || refType == "default") primaryFooter = pathRef;
+                            }
+                        }
+                    }
+                    catch { /* dangling rel — skip */ }
+                }
+                if (primaryFooter != null) node.Format["footerRef"] = primaryFooter;
+            }
         }
 
         // Document protection
