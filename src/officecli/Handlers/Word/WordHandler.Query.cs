@@ -521,6 +521,17 @@ public partial class WordHandler
                 chartNode.Format["id"] = chartInfo.DocProperties.Id.Value;
             if (chartInfo.DocProperties?.Name?.Value != null)
                 chartNode.Format["name"] = chartInfo.DocProperties.Name.Value;
+            // BUG-R7-06: width/height live on the wp:extent of the inline
+            // wrapper, not on the chart space itself. Schema declares both as
+            // [add/set/get] and Set actually mutates the extent — but Get
+            // never exposed them. dump→batch round-trip therefore always
+            // dropped frame dimensions and replay used the 15×10cm default.
+            // pptx already returns them; this aligns docx with that contract.
+            var inlineExtent = chartInfo.Inline?.Extent;
+            if (inlineExtent?.Cx?.HasValue == true)
+                chartNode.Format["width"] = $"{inlineExtent.Cx.Value / 360000.0:F1}cm";
+            if (inlineExtent?.Cy?.HasValue == true)
+                chartNode.Format["height"] = $"{inlineExtent.Cy.Value / 360000.0:F1}cm";
 
             if (chartInfo.IsExtended)
             {
@@ -734,16 +745,8 @@ public partial class WordHandler
                 // CONSISTENCY(outline-lvl): outlineLvl not yet exposed by paragraph Get.
                 if (pPr.OutlineLevel?.Val?.Value != null) styleNode.Format["outlineLvl"] = (int)pPr.OutlineLevel.Val.Value;
 
-                // Numbering linkage on the style itself (numPr in style/pPr).
-                // Mirrors paragraph-level numId/ilvl readback in Navigation.cs.
-                if (pPr.NumberingProperties != null)
-                {
-                    var sNumPr = pPr.NumberingProperties;
-                    if (sNumPr.NumberingId?.Val?.Value != null)
-                        styleNode.Format["numId"] = sNumPr.NumberingId.Val.Value.ToString();
-                    if (sNumPr.NumberingLevelReference?.Val?.Value != null)
-                        styleNode.Format["ilvl"] = sNumPr.NumberingLevelReference.Val.Value.ToString();
-                }
+                // Numbering linkage on the style itself emitted below as numId/numLevel
+                // (CONSISTENCY(canonical-keys): paragraph Get also emits numLevel, not ilvl).
 
                 // Toggle props: respect explicit val="false" instead of treating presence as true.
                 if (pPr.KeepNext != null)

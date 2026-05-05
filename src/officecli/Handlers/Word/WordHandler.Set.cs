@@ -528,7 +528,12 @@ public partial class WordHandler
         var parts = value.Split(';');
         var style = ParseBorderStyle(parts[0]);
         uint size;
-        if (parts.Length > 1)
+        // CONSISTENCY(border-empty-segment): mirror the empty-color tolerance
+        // below — BatchEmitter's border fold emits "STYLE;;COLOR" whenever a
+        // side has color but no explicit sz attribute (very common in real
+        // .docx files where w:sz is inherited via the style chain). Treat an
+        // empty SIZE segment as "use default" instead of throwing.
+        if (parts.Length > 1 && !string.IsNullOrEmpty(parts[1].Trim()))
         {
             // OOXML stores border size in eighth-of-a-point units. Accept bare
             // integer (already in eighths) plus unit-qualified lengths
@@ -552,9 +557,19 @@ public partial class WordHandler
         }
         else
             size = style == BorderValues.Nil ? 0u : style == BorderValues.Thick ? 12u : 4u;
-        string? color = parts.Length > 2 ? SanitizeHex(parts[2]) : null;
+        // BUG-R7-02: dump emits "nil;0;;0" for nil borders (empty color
+        // segment). SanitizeHex rejects empty input with "Invalid color
+        // value: ''", breaking round-trip on any docx with nil paragraph
+        // borders. Treat an empty color segment as "no color" (null) rather
+        // than a parse error — this matches dump's emit semantics.
+        string? color = (parts.Length > 2 && !string.IsNullOrEmpty(parts[2]))
+            ? SanitizeHex(parts[2])
+            : null;
         uint space = 0u;
-        if (parts.Length > 3 && !uint.TryParse(parts[3], out space))
+        // CONSISTENCY(border-empty-segment): symmetric with the SIZE/COLOR
+        // tolerance — empty SPACE segment means "no override".
+        if (parts.Length > 3 && !string.IsNullOrEmpty(parts[3])
+            && !uint.TryParse(parts[3], out space))
             throw new ArgumentException($"Invalid border space '{parts[3]}', expected integer. Format: STYLE[;SIZE[;COLOR[;SPACE]]]");
         return (style, size, color, space);
     }
@@ -671,6 +686,12 @@ public partial class WordHandler
                 var (lsTwips, lsIsMultiplier) = SpacingConverter.ParseWordLineSpacing(value);
                 spacingLine.Line = lsTwips.ToString();
                 spacingLine.LineRule = lsIsMultiplier ? LineSpacingRuleValues.Auto : LineSpacingRuleValues.Exact;
+                return true;
+            case "linerule":
+                // BUG-019: explicit override needed to distinguish AtLeast
+                // from Exact — both serialize as "Npt" via SpacingConverter.
+                var spacingRule = pProps.SpacingBetweenLines ?? (pProps.SpacingBetweenLines = new SpacingBetweenLines());
+                spacingRule.LineRule = ParseLineRule(value);
                 return true;
             case "numId" or "numid":
                 var numPr = pProps.NumberingProperties ?? (pProps.NumberingProperties = new NumberingProperties());

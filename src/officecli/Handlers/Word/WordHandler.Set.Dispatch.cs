@@ -1003,8 +1003,15 @@ public partial class WordHandler
                             "right" or "end" => LevelJustificationValues.Right,
                             _ => throw new ArgumentException($"Invalid justification '{value}'. Valid: left, center, right.")
                         };
+                        // BUG-R5-T4: CT_Lvl schema order is start, numFmt,
+                        // lvlRestart, pStyle, isLgl, suff, lvlText,
+                        // lvlPicBulletId, legacy, lvlJc, pPr, rPr — Word
+                        // silently ignores out-of-order children. Use the
+                        // schema-aware insertion helper instead of raw
+                        // AppendChild (which always tacks elements at the
+                        // end, regardless of where they belong).
                         var jc = level.GetFirstChild<LevelJustification>();
-                        if (jc == null) level.AppendChild(new LevelJustification { Val = jcV });
+                        if (jc == null) InsertLevelChildInOrder(level, new LevelJustification { Val = jcV });
                         else jc.Val = jcV;
                         break;
                     case "suff":
@@ -1016,7 +1023,7 @@ public partial class WordHandler
                             _ => throw new ArgumentException($"Invalid suff '{value}'. Valid: tab, space, nothing.")
                         };
                         var su = level.GetFirstChild<LevelSuffix>();
-                        if (su == null) level.AppendChild(new LevelSuffix { Val = sV });
+                        if (su == null) InsertLevelChildInOrder(level, new LevelSuffix { Val = sV });
                         else su.Val = sV;
                         break;
                     case "indent":
@@ -1239,9 +1246,34 @@ public partial class WordHandler
             ?? throw new ArgumentException(
                 $"num with id={numId} not found. Use `add /numbering --type num --prop abstractNumId=N` first.");
 
+        // BUG-R5-T1: Add and Get both support `start` / `startOverride.N`,
+        // but Set previously only handled abstractNumId — the symmetry break
+        // forced callers to delete + re-Add a num just to bump a level
+        // override. Mirror Add's parsing: `start` = shorthand for
+        // `startOverride.0`; `startOverride.N` (0..8) creates or updates the
+        // <w:lvlOverride><w:startOverride/></w:lvlOverride> child.
+        void SetStartOverride(int lvl, int startVal)
+        {
+            if (lvl < 0 || lvl > 8)
+                throw new ArgumentException($"startOverride level must be 0..8 (got {lvl}).");
+            var lvlOverride = inst.Elements<LevelOverride>()
+                .FirstOrDefault(o => o.LevelIndex?.Value == lvl);
+            if (lvlOverride == null)
+            {
+                lvlOverride = new LevelOverride { LevelIndex = lvl };
+                inst.AppendChild(lvlOverride);
+            }
+            var sov = lvlOverride.GetFirstChild<StartOverrideNumberingValue>();
+            if (sov == null)
+                lvlOverride.AppendChild(new StartOverrideNumberingValue { Val = startVal });
+            else
+                sov.Val = startVal;
+        }
+
         foreach (var (key, value) in properties)
         {
-            switch (key.ToLowerInvariant())
+            var keyLower = key.ToLowerInvariant();
+            switch (keyLower)
             {
                 case "abstractnumid":
                     var aidVal = ParseHelpers.SafeParseInt(value, "abstractNumId");
@@ -1254,8 +1286,20 @@ public partial class WordHandler
                     var aid = inst.AbstractNumId ?? (inst.AbstractNumId = new AbstractNumId());
                     aid.Val = aidVal;
                     break;
+                case "start":
+                    SetStartOverride(0, ParseHelpers.SafeParseInt(value, "start"));
+                    break;
                 default:
-                    unsupported.Add(key);
+                    if (keyLower.StartsWith("startoverride."))
+                    {
+                        var lvlStr = key.Substring("startOverride.".Length);
+                        var lvl = ParseHelpers.SafeParseInt(lvlStr, key);
+                        SetStartOverride(lvl, ParseHelpers.SafeParseInt(value, key));
+                    }
+                    else
+                    {
+                        unsupported.Add(key);
+                    }
                     break;
             }
         }
@@ -1411,6 +1455,15 @@ public partial class WordHandler
                         : new DocumentFormat.OpenXml.EnumValue<LineSpacingRuleValues>(LineSpacingRuleValues.Exact);
                     break;
                 }
+                case "linerule" or "lineRule":
+                {
+                    // BUG-019: explicit override needed — lineSpacing alone
+                    // cannot distinguish AtLeast from Exact.
+                    var pPr5 = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                    var sp5 = pPr5.SpacingBetweenLines ?? (pPr5.SpacingBetweenLines = new SpacingBetweenLines());
+                    sp5.LineRule = ParseLineRule(value);
+                    break;
+                }
                 case "contextualspacing" or "contextualSpacing":
                 {
                     var pPrCs = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
@@ -1499,6 +1552,42 @@ public partial class WordHandler
                 {
                     var pPrB = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
                     ApplyStyleParagraphBorders(pPrB, key, value);
+                    break;
+                }
+                // CONSISTENCY(style-indent): list-family styles (List, List Paragraph,
+                // List 2/3, List Continue 1/2/3, Intense Quote) carry their indent on
+                // the style definition. Without these cases the BatchEmitter dump emits
+                // leftIndent / hangingIndent / firstLineIndent / rightIndent on /styles
+                // and Set rejects them as UNSUPPORTED — list styles round-trip with
+                // their indent erased (BUG BT-5). StyleUnsupportedHints' "set indent at
+                // paragraph level" hint covered the user-typed-by-hand case but is
+                // wrong for round-trip.
+                case "leftindent" or "leftIndent":
+                {
+                    var pPrLi = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                    var indLi = pPrLi.Indentation ?? (pPrLi.Indentation = new Indentation());
+                    indLi.Left = SpacingConverter.ParseWordSpacing(value).ToString();
+                    break;
+                }
+                case "rightindent" or "rightIndent":
+                {
+                    var pPrRi = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                    var indRi = pPrRi.Indentation ?? (pPrRi.Indentation = new Indentation());
+                    indRi.Right = SpacingConverter.ParseWordSpacing(value).ToString();
+                    break;
+                }
+                case "firstlineindent" or "firstLineIndent":
+                {
+                    var pPrFli = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                    var indFli = pPrFli.Indentation ?? (pPrFli.Indentation = new Indentation());
+                    indFli.FirstLine = SpacingConverter.ParseWordSpacing(value).ToString();
+                    break;
+                }
+                case "hangingindent" or "hangingIndent":
+                {
+                    var pPrHi = style.StyleParagraphProperties ?? EnsureStyleParagraphProperties(style);
+                    var indHi = pPrHi.Indentation ?? (pPrHi.Indentation = new Indentation());
+                    indHi.Hanging = SpacingConverter.ParseWordSpacing(value).ToString();
                     break;
                 }
                 // Per-script font split. Each w:rFonts attr is independent and

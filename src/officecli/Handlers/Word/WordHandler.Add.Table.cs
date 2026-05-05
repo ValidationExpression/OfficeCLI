@@ -18,23 +18,40 @@ public partial class WordHandler
     private string AddTable(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
         var table = new Table();
-        var tblProps = new TableProperties(
-            new TableBorders(
-                new TopBorder { Val = BorderValues.Single, Size = 4 },
-                new LeftBorder { Val = BorderValues.Single, Size = 4 },
-                new BottomBorder { Val = BorderValues.Single, Size = 4 },
-                new RightBorder { Val = BorderValues.Single, Size = 4 },
-                new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4 },
-                new InsideVerticalBorder { Val = BorderValues.Single, Size = 4 }
-            )
-        );
-        table.AppendChild(tblProps);
-
-        // Apply border properties from Add parameters
-        foreach (var (bk, bv) in properties)
+        // BUG-R7-03: Previously this always seeded all 6 borders (top/bottom/
+        // left/right/insideH/insideV) and then applied user props on top —
+        // which corrupted three-line tables (top+bottom only) on round-trip
+        // because dump emits only the user-set sides. When the caller passes
+        // ANY border.* prop, treat it as an explicit specification: start
+        // with an empty TableBorders and apply only the requested sides.
+        // Otherwise (no border props at all), keep the historical default
+        // grid look so bare `add table` still produces a visible table.
+        var hasExplicitBorders = properties.Keys.Any(k =>
+            k.StartsWith("border", StringComparison.OrdinalIgnoreCase));
+        TableProperties tblProps;
+        if (hasExplicitBorders)
         {
-            if (bk.StartsWith("border", StringComparison.OrdinalIgnoreCase))
-                ApplyTableBorders(tblProps, bk, bv);
+            tblProps = new TableProperties(new TableBorders());
+            table.AppendChild(tblProps);
+            foreach (var (bk, bv) in properties)
+            {
+                if (bk.StartsWith("border", StringComparison.OrdinalIgnoreCase))
+                    ApplyTableBorders(tblProps, bk, bv);
+            }
+        }
+        else
+        {
+            tblProps = new TableProperties(
+                new TableBorders(
+                    new TopBorder { Val = BorderValues.Single, Size = 4 },
+                    new LeftBorder { Val = BorderValues.Single, Size = 4 },
+                    new BottomBorder { Val = BorderValues.Single, Size = 4 },
+                    new RightBorder { Val = BorderValues.Single, Size = 4 },
+                    new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4 },
+                    new InsideVerticalBorder { Val = BorderValues.Single, Size = 4 }
+                )
+            );
+            table.AppendChild(tblProps);
         }
 
         // Parse data if provided: "H1,H2;R1C1,R1C2;R2C1,R2C2" or CSV file/URL/data-URI
@@ -173,14 +190,24 @@ public partial class WordHandler
             {
                 var cellText = tableData != null && r < tableData.Length && c < tableData[r].Length
                     ? tableData[r][c] : (properties.TryGetValue($"r{r + 1}c{c + 1}", out var rc) ? rc : "");
-                var cellPara = new Paragraph(new ParagraphProperties(
-                    new SpacingBetweenLines { After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto }));
+                // CONSISTENCY(table-cell-defaults): do not stamp explicit
+                // spaceAfter=0 / lineSpacing=240 Auto on freshly-created cell
+                // paragraphs — let them inherit from style/docDefaults like
+                // regular body paragraphs. Otherwise dump→batch round-trip
+                // grows 67 extra `set spaceAfter=0pt lineSpacing=1x` commands
+                // per cell (BUG-R3-3).
+                var cellPara = new Paragraph();
                 AssignParaId(cellPara);
                 if (!string.IsNullOrEmpty(cellText))
                     cellPara.AppendChild(new Run(new Text(cellText) { Space = SpaceProcessingModeValues.Preserve }));
                 var cell = new TableCell(cellPara);
-                if (colWidthArr != null && c < colWidthArr.Length)
-                    cell.PrependChild(new TableCellProperties(new TableCellWidth { Width = colWidthArr[c].ToString(), Type = TableWidthUnitValues.Dxa }));
+                // BUG-R6-06 / BUG-R6-01: do NOT stamp an explicit
+                // <w:tcW> on every cell when the user supplied colWidths
+                // — w:tblGrid/w:gridCol already encodes the column
+                // widths, and per-cell tcW makes dump→batch→dump
+                // non-idempotent (each round-trip emits N×M extra
+                // `set width=…` commands). Cells without a tcW inherit
+                // the column width from tblGrid as the schema intends.
                 row.AppendChild(cell);
             }
             table.AppendChild(row);

@@ -26,7 +26,7 @@ static partial class CommandBuilder
         dumpCommand.Add(outOpt);
         dumpCommand.Add(jsonOption);
 
-        dumpCommand.SetAction(result => SafeRun(() =>
+        dumpCommand.SetAction(result => { var json = result.GetValue(jsonOption); return SafeRun(() =>
         {
             var file = result.GetValue(dumpFileArg)!;
             var format = (result.GetValue(formatOpt) ?? "batch").ToLowerInvariant();
@@ -51,13 +51,36 @@ static partial class CommandBuilder
             // never threaded into Serialize — kept the compact behavior, just
             // dropped the dead options block.
             var output = JsonSerializer.Serialize(items, BatchJsonContext.Default.ListBatchItem);
-            var json = result.GetValue(jsonOption);
+            // BUG-R4-FUZZ-3: Unix convention — `--out -` means stdout, not a
+            // file literally named "-". Without this, running `dump --out -`
+            // silently created a `-` file in the cwd (and could pollute the
+            // project tree if invoked from inside it).
+            if (outPath == "-")
+                outPath = null;
             if (outPath != null)
             {
+                // The on-disk file is the canonical batch wire form (bare
+                // JSON array) so it can feed `batch --input <file>`
+                // unchanged — wrapping it in an envelope would break
+                // batch consumption.
                 File.WriteAllText(outPath, output);
                 if (json)
-                    Console.WriteLine(OutputFormatter.WrapEnvelope(
-                        "\"" + outPath.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""));
+                {
+                    // BUG-R6-01: previously stdout returned
+                    //   {"success": true, "data": "/tmp/out.json"}
+                    // which was indistinguishable in shape from the
+                    // no-out form (data is array). Make the file mode's
+                    // envelope unambiguous by surfacing structured
+                    // metadata under `data` instead of a bare path
+                    // string. Callers can detect "data has outputFile" to
+                    // disambiguate.
+                    var meta = new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["outputFile"] = outPath,
+                        ["itemCount"] = items.Count
+                    };
+                    Console.WriteLine(OutputFormatter.WrapEnvelope(meta.ToJsonString()));
+                }
                 else
                     Console.WriteLine(outPath);
             }
@@ -69,7 +92,7 @@ static partial class CommandBuilder
                     Console.WriteLine(output);
             }
             return 0;
-        }));
+        }, json); });
 
         return dumpCommand;
     }

@@ -108,6 +108,76 @@ public partial class WordHandler
             var markRPr = pProps.ParagraphMarkRunProperties ?? pProps.AppendChild(new ParagraphMarkRunProperties());
             ApplyRunFormatting(markRPr, "size.cs", paraSizeCs);
         }
+        // BUG-R7-07: when the paragraph has no `text` prop, no run is created
+        // — yet style-overriding run-level props (size, italic=false,
+        // bold=false, color, font.* …) must still ride on the paragraph mark
+        // rPr so they survive the next dump. Without this hoist, dump→batch
+        // round-trip silently drops the override and the style's defaults
+        // re-emerge (e.g. `style=TOC2 size=11pt` → 12pt because TOC2's
+        // base size is 12pt). Mirrors the size.cs/italic.cs/bold.cs hoist
+        // above. Only applied when there is no text run carrier.
+        if (!properties.ContainsKey("text"))
+        {
+            ParagraphMarkRunProperties? noTextMarkRPr = null;
+            ParagraphMarkRunProperties EnsureNoTextMarkRPr() =>
+                noTextMarkRPr ??= (pProps.ParagraphMarkRunProperties
+                    ?? pProps.AppendChild(new ParagraphMarkRunProperties()));
+            if (properties.TryGetValue("size", out var ntSize)
+                || properties.TryGetValue("font.size", out ntSize)
+                || properties.TryGetValue("fontsize", out ntSize))
+                ApplyRunFormatting(EnsureNoTextMarkRPr(), "size", ntSize);
+            // BUG-R7-07 / F-7: explicit `false` must produce <w:b w:val="false"/>
+            // (resp. <w:i w:val="false"/>) so it overrides a style that sets
+            // bold/italic=true. ApplyRunFormatting on its own removes the
+            // element entirely on a falsy value — that contract is preserved
+            // for the Set-after-create call sites (existing R25/R26 tests
+            // depend on it). Only the Add path needs the explicit-override
+            // semantics, so emit the val=false form directly here.
+            if (properties.TryGetValue("bold", out var ntBold)
+                || properties.TryGetValue("font.bold", out ntBold))
+            {
+                var rp = EnsureNoTextMarkRPr();
+                rp.RemoveAllChildren<Bold>();
+                if (IsTruthy(ntBold))
+                    InsertRunPropInSchemaOrder(rp, new Bold());
+                else if (IsExplicitFalseAddOverride(ntBold))
+                    InsertRunPropInSchemaOrder(rp, new Bold { Val = OnOffValue.FromBoolean(false) });
+            }
+            if (properties.TryGetValue("italic", out var ntItalic)
+                || properties.TryGetValue("font.italic", out ntItalic))
+            {
+                var rp = EnsureNoTextMarkRPr();
+                rp.RemoveAllChildren<Italic>();
+                if (IsTruthy(ntItalic))
+                    InsertRunPropInSchemaOrder(rp, new Italic());
+                else if (IsExplicitFalseAddOverride(ntItalic))
+                    InsertRunPropInSchemaOrder(rp, new Italic { Val = OnOffValue.FromBoolean(false) });
+            }
+            if (properties.TryGetValue("color", out var ntColor)
+                || properties.TryGetValue("font.color", out ntColor))
+                ApplyRunFormatting(EnsureNoTextMarkRPr(), "color", ntColor);
+            if (properties.TryGetValue("underline", out var ntUl)
+                || properties.TryGetValue("font.underline", out ntUl))
+                ApplyRunFormatting(EnsureNoTextMarkRPr(), "underline", ntUl);
+            if (properties.TryGetValue("strike", out var ntStrike)
+                || properties.TryGetValue("font.strike", out ntStrike)
+                || properties.TryGetValue("strikethrough", out ntStrike)
+                || properties.TryGetValue("font.strikethrough", out ntStrike))
+                ApplyRunFormatting(EnsureNoTextMarkRPr(), "strike", ntStrike);
+            if (properties.TryGetValue("font", out var ntFont)
+                || properties.TryGetValue("font.name", out ntFont))
+                ApplyRunFormatting(EnsureNoTextMarkRPr(), "font", ntFont);
+            if (properties.TryGetValue("font.latin", out var ntFontLatin))
+                ApplyRunFormatting(EnsureNoTextMarkRPr(), "font.latin", ntFontLatin);
+            if (properties.TryGetValue("font.ea", out var ntFontEa)
+                || properties.TryGetValue("font.eastasia", out ntFontEa)
+                || properties.TryGetValue("font.eastasian", out ntFontEa))
+                ApplyRunFormatting(EnsureNoTextMarkRPr(), "font.ea", ntFontEa);
+            if (properties.TryGetValue("font.cs", out var ntFontCs)
+                || properties.TryGetValue("font.complexscript", out ntFontCs)
+                || properties.TryGetValue("font.complex", out ntFontCs))
+                ApplyRunFormatting(EnsureNoTextMarkRPr(), "font.cs", ntFontCs);
+        }
         if (properties.TryGetValue("firstlineindent", out var indent) || properties.TryGetValue("firstLineIndent", out indent))
         {
             // Lenient input: accept "2cm", "0.5in", "18pt", or bare twips (backward compat).
@@ -136,6 +206,16 @@ public partial class WordHandler
             var (twips, isMultiplier) = SpacingConverter.ParseWordLineSpacing(ls4);
             spacing.Line = twips.ToString();
             spacing.LineRule = isMultiplier ? LineSpacingRuleValues.Auto : LineSpacingRuleValues.Exact;
+        }
+        // BUG-019: lineSpacing alone cannot distinguish AtLeast from Exact —
+        // both serialize as "Npt" via SpacingConverter. Accept an explicit
+        // `lineRule` prop (auto/exact/atLeast) so dump→batch round-trips
+        // preserve the rule. Without this, AtLeast spacing silently
+        // downgraded to Exact, producing glyph clipping on tall content.
+        if (properties.TryGetValue("lineRule", out var pLineRule) || properties.TryGetValue("linerule", out pLineRule))
+        {
+            var spacing = pProps.SpacingBetweenLines ?? (pProps.SpacingBetweenLines = new SpacingBetweenLines());
+            spacing.LineRule = ParseLineRule(pLineRule);
         }
         // Numbering properties. Parallel branches so `ilvl` alone still
         // emits <w:ilvl> (matching `set --prop ilvl=N` behaviour); both
@@ -227,6 +307,32 @@ public partial class WordHandler
             ind.FirstLine = null;
         }
         // firstlineindent already handled above (line ~66-74) with × 480 conversion
+        // BUG-R5-F3: Get already exposes char-based indent values that
+        // CJK Word documents emit heavily (firstLineChars, leftChars,
+        // rightChars, hangingChars — w:ind/@w:firstLineChars etc., units
+        // of 1/100 of a Chinese-character width). Add ignored them, so
+        // dump→replay produced 750+ UNSUPPORTED warnings on Chinese docs
+        // and lost the chars-based indent silently. Accept them on Add.
+        if (properties.TryGetValue("firstLineChars", out var addFLC) || properties.TryGetValue("firstlinechars", out addFLC))
+        {
+            var ind = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+            ind.FirstLineChars = ParseHelpers.SafeParseInt(addFLC, "firstLineChars");
+        }
+        if (properties.TryGetValue("leftChars", out var addLC) || properties.TryGetValue("leftchars", out addLC))
+        {
+            var ind = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+            ind.LeftChars = ParseHelpers.SafeParseInt(addLC, "leftChars");
+        }
+        if (properties.TryGetValue("rightChars", out var addRC) || properties.TryGetValue("rightchars", out addRC))
+        {
+            var ind = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+            ind.RightChars = ParseHelpers.SafeParseInt(addRC, "rightChars");
+        }
+        if (properties.TryGetValue("hangingChars", out var addHC) || properties.TryGetValue("hangingchars", out addHC))
+        {
+            var ind = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+            ind.HangingChars = ParseHelpers.SafeParseInt(addHC, "hangingChars");
+        }
         if ((properties.TryGetValue("keepnext", out var addKN) || properties.TryGetValue("keepNext", out addKN)) && IsTruthy(addKN))
             pProps.KeepNext = new KeepNext();
         if ((properties.TryGetValue("keeplines", out var addKL) || properties.TryGetValue("keeptogether", out addKL) || properties.TryGetValue("keepLines", out addKL) || properties.TryGetValue("keepTogether", out addKL)) && IsTruthy(addKL))
@@ -272,13 +378,47 @@ public partial class WordHandler
             pProps.ContextualSpacing = IsTruthy(addCS)
                 ? new ContextualSpacing()
                 : new ContextualSpacing { Val = false };
+        // CONSISTENCY(add-set-symmetry): Set supports outlineLvl via the
+        // schema fallback (TrySetParagraphProp + TypedAttributeFallback);
+        // Add must accept the same canonical key so dump round-trip stays
+        // lossless — the dump emitter pulls outlineLvl from paragraph Get
+        // readback (WordHandler.Navigation.cs:1265-1266) and surfaces it as
+        // an Add prop. BUG-R4-BT4.
+        if (properties.TryGetValue("outlineLvl", out var addOLvl)
+            || properties.TryGetValue("outlinelvl", out addOLvl)
+            || properties.TryGetValue("outlineLevel", out addOLvl)
+            || properties.TryGetValue("outlinelevel", out addOLvl))
+        {
+            if (int.TryParse(addOLvl, out var olvl) && olvl >= 0 && olvl <= 9)
+                pProps.OutlineLevel = new OutlineLevel { Val = olvl };
+        }
+        // CONSISTENCY(add-set-symmetry): paragraph rStyle binds the paragraph
+        // mark's run style. Run Add already supports rStyle; paragraph dump
+        // emit echoes it back from Get (mark rPr.rStyle) and the value
+        // applies to all runs the paragraph carries via its mark inheritance.
+        // BUG-R4-BT4. Stored in ParagraphMarkRunProperties so the run-style
+        // sticks to the paragraph mark itself (not just any subsequently
+        // added run).
+        if (properties.TryGetValue("rStyle", out var addPRStyle) || properties.TryGetValue("rstyle", out addPRStyle))
+        {
+            var pmrp = pProps.ParagraphMarkRunProperties ?? pProps.AppendChild(new ParagraphMarkRunProperties());
+            pmrp.RemoveAllChildren<RunStyle>();
+            pmrp.PrependChild(new RunStyle { Val = addPRStyle });
+        }
         foreach (var (pk, pv) in properties)
         {
             // CONSISTENCY(add-set-symmetry): Set accepts border.top/bottom/left/right/between/bar
             // (and bare "border"/"border.all"); Add must accept the same vocabulary so the
             // Add → Get → verify lifecycle works without a follow-up Set call.
-            if (pk.StartsWith("pbdr", StringComparison.OrdinalIgnoreCase)
-                || pk.StartsWith("border", StringComparison.OrdinalIgnoreCase))
+            // 3-segment keys (pbdr.top.sz / pbdr.top.color / pbdr.top.space)
+            // surface in Get readback but Set's TrySetParagraphProp switch
+            // doesn't model them either — calling ApplyParagraphBorders with a
+            // 3-segment key drives ParseBorderValue with the sub-attribute
+            // value (e.g. "4"), which throws "Invalid border style: '4'".
+            // Skip them here to keep Add/Set symmetry (BUG-R2-02 / BT-2).
+            if ((pk.StartsWith("pbdr", StringComparison.OrdinalIgnoreCase)
+                 || pk.StartsWith("border", StringComparison.OrdinalIgnoreCase))
+                && pk.Count(ch => ch == '.') < 2)
                 ApplyParagraphBorders(pProps, pk, pv);
         }
         if (properties.TryGetValue("liststyle", out var listStyle) || properties.TryGetValue("listStyle", out listStyle))
@@ -345,18 +485,44 @@ public partial class WordHandler
                 if (rfCs != null) rFonts.ComplexScript = rfCs;
                 rProps.AppendChild(rFonts);
             }
+            // BUG-R6-03 / F-3: rStyle binds the paragraph mark above (so the
+            // style sticks to the paragraph) but the implicit text run
+            // rendered alongside `text=…` previously inherited Normal —
+            // every dump→batch round-trip silently dropped run-style
+            // formatting from headings (`add p text=… rStyle=Strong`).
+            // Apply rStyle to the implicit run rPr too so the visible text
+            // picks up the character style in addition to the mark.
+            if (properties.TryGetValue("rStyle", out var pRunRStyle)
+                || properties.TryGetValue("rstyle", out pRunRStyle))
+            {
+                rProps.RunStyle = new RunStyle { Val = pRunRStyle };
+            }
             if (properties.TryGetValue("size", out var size) || properties.TryGetValue("font.size", out size) || properties.TryGetValue("fontsize", out size))
             {
                 rProps.AppendChild(new FontSize { Val = ((int)Math.Round(ParseFontSize(size) * 2, MidpointRounding.AwayFromZero)).ToString() });
             }
-            if ((properties.TryGetValue("bold", out var bold) || properties.TryGetValue("font.bold", out bold)) && IsTruthy(bold))
-                rProps.Bold = new Bold();
+            // CONSISTENCY(toggle-explicit-false): match the no-text branch
+            // (BUG-R7-07) — explicit `false` must emit <w:b w:val="false"/>
+            // so a run can override a style-asserted toggle. IsTruthy alone
+            // would silently drop the override and the run would re-inherit
+            // bold/italic from the style chain (e.g. non-bold span inside
+            // Heading1, non-italic citation inside Quote).
+            if (properties.TryGetValue("bold", out var bold) || properties.TryGetValue("font.bold", out bold))
+            {
+                if (IsTruthy(bold)) rProps.Bold = new Bold();
+                else if (IsExplicitFalseAddOverride(bold))
+                    rProps.Bold = new Bold { Val = OnOffValue.FromBoolean(false) };
+            }
             if ((properties.TryGetValue("bold.cs", out var boldCs)
                     || properties.TryGetValue("font.bold.cs", out boldCs))
                 && IsTruthy(boldCs))
                 rProps.BoldComplexScript = new BoldComplexScript();
-            if ((properties.TryGetValue("italic", out var pItalic) || properties.TryGetValue("font.italic", out pItalic)) && IsTruthy(pItalic))
-                rProps.Italic = new Italic();
+            if (properties.TryGetValue("italic", out var pItalic) || properties.TryGetValue("font.italic", out pItalic))
+            {
+                if (IsTruthy(pItalic)) rProps.Italic = new Italic();
+                else if (IsExplicitFalseAddOverride(pItalic))
+                    rProps.Italic = new Italic { Val = OnOffValue.FromBoolean(false) };
+            }
             if ((properties.TryGetValue("italic.cs", out var italicCs)
                     || properties.TryGetValue("font.italic.cs", out italicCs))
                 && IsTruthy(italicCs))
@@ -376,48 +542,95 @@ public partial class WordHandler
                 // way ApplyRunFormatting (Set path) does — otherwise
                 // Add(.., {color=accent1}) would call SanitizeHex on the
                 // scheme name and produce garbage hex.
-                var pSchemeName = OfficeCli.Core.ParseHelpers.NormalizeSchemeColorName(pColor);
-                if (pSchemeName != null)
-                    rProps.Color = new Color { Val = "auto", ThemeColor = new EnumValue<ThemeColorValues>(new ThemeColorValues(pSchemeName)) };
+                // CONSISTENCY(color-auto): bare "auto" is a legal Color val
+                // (Word's "automatic" text color); short-circuit before the
+                // scheme branch since "auto" is not a ThemeColorValues enum.
+                if (string.Equals(pColor, "auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    rProps.Color = new Color { Val = "auto" };
+                }
                 else
-                    rProps.Color = new Color { Val = SanitizeHex(pColor) };
+                {
+                    var pSchemeName = OfficeCli.Core.ParseHelpers.NormalizeSchemeColorName(pColor);
+                    if (pSchemeName != null)
+                        rProps.Color = new Color { Val = "auto", ThemeColor = new EnumValue<ThemeColorValues>(new ThemeColorValues(pSchemeName)) };
+                    else
+                        rProps.Color = new Color { Val = SanitizeHex(pColor) };
+                }
             }
             if (properties.TryGetValue("underline", out var pUnderline) || properties.TryGetValue("font.underline", out pUnderline))
             {
                 var ulVal = NormalizeUnderlineValue(pUnderline);
                 rProps.Underline = new Underline { Val = new UnderlineValues(ulVal) };
             }
-            if ((properties.TryGetValue("strike", out var pStrike)
+            // CONSISTENCY(toggle-explicit-false): see bold/italic above.
+            if (properties.TryGetValue("strike", out var pStrike)
                     || properties.TryGetValue("strikethrough", out pStrike)
                     || properties.TryGetValue("font.strike", out pStrike)
                     || properties.TryGetValue("font.strikethrough", out pStrike))
-                && IsTruthy(pStrike))
-                rProps.Strike = new Strike();
+            {
+                if (IsTruthy(pStrike)) rProps.Strike = new Strike();
+                else if (IsExplicitFalseAddOverride(pStrike))
+                    rProps.Strike = new Strike { Val = OnOffValue.FromBoolean(false) };
+            }
             if (properties.TryGetValue("highlight", out var pHighlight))
                 rProps.Highlight = new Highlight { Val = ParseHighlightColor(pHighlight) };
-            if ((properties.TryGetValue("caps", out var pCaps)
+            if (properties.TryGetValue("caps", out var pCaps)
                     || properties.TryGetValue("allcaps", out pCaps)
                     || properties.TryGetValue("allCaps", out pCaps))
-                && IsTruthy(pCaps))
-                rProps.Caps = new Caps();
+            {
+                if (IsTruthy(pCaps)) rProps.Caps = new Caps();
+                else if (IsExplicitFalseAddOverride(pCaps))
+                    rProps.Caps = new Caps { Val = OnOffValue.FromBoolean(false) };
+            }
             if (properties.TryGetValue("smallcaps", out var pSmallCaps) || properties.TryGetValue("smallCaps", out pSmallCaps))
             {
                 if (IsTruthy(pSmallCaps)) rProps.SmallCaps = new SmallCaps();
+                else if (IsExplicitFalseAddOverride(pSmallCaps))
+                    rProps.SmallCaps = new SmallCaps { Val = OnOffValue.FromBoolean(false) };
             }
-            if (properties.TryGetValue("dstrike", out var pDstrike) && IsTruthy(pDstrike))
-                rProps.DoubleStrike = new DoubleStrike();
-            if (properties.TryGetValue("vanish", out var pVanish) && IsTruthy(pVanish))
-                rProps.Vanish = new Vanish();
-            if (properties.TryGetValue("outline", out var pOutline) && IsTruthy(pOutline))
-                rProps.Outline = new Outline();
-            if (properties.TryGetValue("shadow", out var pShadow) && IsTruthy(pShadow))
-                rProps.Shadow = new Shadow();
-            if (properties.TryGetValue("emboss", out var pEmboss) && IsTruthy(pEmboss))
-                rProps.Emboss = new Emboss();
-            if (properties.TryGetValue("imprint", out var pImprint) && IsTruthy(pImprint))
-                rProps.Imprint = new Imprint();
-            if (properties.TryGetValue("noproof", out var pNoProof) && IsTruthy(pNoProof))
-                rProps.NoProof = new NoProof();
+            if (properties.TryGetValue("dstrike", out var pDstrike))
+            {
+                if (IsTruthy(pDstrike)) rProps.DoubleStrike = new DoubleStrike();
+                else if (IsExplicitFalseAddOverride(pDstrike))
+                    rProps.DoubleStrike = new DoubleStrike { Val = OnOffValue.FromBoolean(false) };
+            }
+            if (properties.TryGetValue("vanish", out var pVanish))
+            {
+                if (IsTruthy(pVanish)) rProps.Vanish = new Vanish();
+                else if (IsExplicitFalseAddOverride(pVanish))
+                    rProps.Vanish = new Vanish { Val = OnOffValue.FromBoolean(false) };
+            }
+            if (properties.TryGetValue("outline", out var pOutline))
+            {
+                if (IsTruthy(pOutline)) rProps.Outline = new Outline();
+                else if (IsExplicitFalseAddOverride(pOutline))
+                    rProps.Outline = new Outline { Val = OnOffValue.FromBoolean(false) };
+            }
+            if (properties.TryGetValue("shadow", out var pShadow))
+            {
+                if (IsTruthy(pShadow)) rProps.Shadow = new Shadow();
+                else if (IsExplicitFalseAddOverride(pShadow))
+                    rProps.Shadow = new Shadow { Val = OnOffValue.FromBoolean(false) };
+            }
+            if (properties.TryGetValue("emboss", out var pEmboss))
+            {
+                if (IsTruthy(pEmboss)) rProps.Emboss = new Emboss();
+                else if (IsExplicitFalseAddOverride(pEmboss))
+                    rProps.Emboss = new Emboss { Val = OnOffValue.FromBoolean(false) };
+            }
+            if (properties.TryGetValue("imprint", out var pImprint))
+            {
+                if (IsTruthy(pImprint)) rProps.Imprint = new Imprint();
+                else if (IsExplicitFalseAddOverride(pImprint))
+                    rProps.Imprint = new Imprint { Val = OnOffValue.FromBoolean(false) };
+            }
+            if (properties.TryGetValue("noproof", out var pNoProof))
+            {
+                if (IsTruthy(pNoProof)) rProps.NoProof = new NoProof();
+                else if (IsExplicitFalseAddOverride(pNoProof))
+                    rProps.NoProof = new NoProof { Val = OnOffValue.FromBoolean(false) };
+            }
             // Run-level rtl: explicit `rtl=true` OR cascaded from paragraph
             // direction=rtl above. Skipping the cascade would leave Latin
             // character order inside an RTL paragraph (broken Arabic).
@@ -502,13 +715,21 @@ public partial class WordHandler
             "style", "styleid", "stylename",
             "align", "alignment", "direction", "dir", "bidi",
             "firstlineindent", "leftindent", "indentleft", "indent",
+            // BUG-R5-F3: chars-based indent variants consumed above.
+            "firstlinechars", "firstLineChars",
+            "leftchars", "leftChars",
+            "rightchars", "rightChars",
+            "hangingchars", "hangingChars",
             "rightindent", "indentright", "hangingindent", "hanging",
             "spacebefore", "spaceafter", "linespacing", "lineSpacing",
             "keepnext", "keepwithnext", "keeplines", "keeptogether",
             "pagebreakbefore", "break",
+            "widowcontrol", "widowControl",
             "numid", "numId", "ilvl", "numlevel", "numLevel",
             "liststyle", "listStyle", "start", "level", "listLevel", "listlevel",
             "outlinelevel", "outlineLevel",
+            "outlinelvl", "outlineLvl",
+            "rstyle", "rStyle",
             "tabs", "tabstops",
             "border", "borders", "shd", "shading",
             "font", "size", "bold", "italic", "color", "highlight",
@@ -519,6 +740,11 @@ public partial class WordHandler
             "caps", "smallcaps",
             "boldcs", "italiccs", "sizecs",
             "field", "formula", "ref", "id",
+            // BUG-R7-06: bdr (character border) and kern (kerning) are
+            // run-level OOXML keys — handled via ApplyRunFormatting on the
+            // bare-key fallback path below. Listing them here just prevents
+            // double-routing through TypedAttributeFallback.
+            "bdr", "kern",
         };
         foreach (var (key, value) in properties)
         {
@@ -607,6 +833,25 @@ public partial class WordHandler
                 ?? pProps.AppendChild(new ParagraphMarkRunProperties());
             if (Core.TypedAttributeFallback.TrySet(paraMarkRPr, key, value)) continue;
             if (paraMarkRPr.ChildElements.Count == 0) paraMarkRPr.Remove();
+            // BUG-R5-04 / BUG-R5-05: bare-key val-leaves (textboxTightWrap,
+            // divId, …) had no fallback path on Add — only TypedAttributeFallback,
+            // which requires dotted keys. dump→batch round-trip emits these
+            // as bare keys on `add p`, so they were silently dropped. Try
+            // TryCreateTypedChild on pPr first (paragraph-scope leaves like
+            // textboxTightWrap, divId), then on the run rPr / paragraph-mark
+            // rPr for run-scope leaves (webHidden — BUG-R5-06: dump misplaces
+            // it onto the paragraph, but accepting it on either container
+            // here lets dump→replay succeed without losing the property).
+            if (!key.Contains('.'))
+            {
+                if (Core.GenericXmlQuery.TryCreateTypedChild(pProps, key, value)) continue;
+                if (rPropsForFallback != null
+                    && Core.GenericXmlQuery.TryCreateTypedChild(rPropsForFallback, key, value)) continue;
+                var fallbackMarkRPr = pProps.GetFirstChild<ParagraphMarkRunProperties>()
+                    ?? pProps.AppendChild(new ParagraphMarkRunProperties());
+                if (Core.GenericXmlQuery.TryCreateTypedChild(fallbackMarkRPr, key, value)) continue;
+                if (fallbackMarkRPr.ChildElements.Count == 0) fallbackMarkRPr.Remove();
+            }
             LastAddUnsupportedProps.Add(key);
         }
 
@@ -824,13 +1069,26 @@ public partial class WordHandler
         }
         if (properties.TryGetValue("size", out var rSize) || properties.TryGetValue("font.size", out rSize) || properties.TryGetValue("fontsize", out rSize))
             newRProps.AppendChild(new FontSize { Val = ((int)Math.Round(ParseFontSize(rSize) * 2, MidpointRounding.AwayFromZero)).ToString() });
-        if ((properties.TryGetValue("bold", out var rBold) || properties.TryGetValue("font.bold", out rBold)) && IsTruthy(rBold))
-            newRProps.Bold = new Bold();
+        // CONSISTENCY(toggle-explicit-false): mirror AddParagraph text-bearing
+        // (BUG-018) — explicit `false` must emit <w:b w:val="false"/> so the
+        // run can override a style-asserted toggle. AddRun reaches this block
+        // via dump→batch replay of any docx with run-level toggle overrides
+        // (Heading1 + non-bold span, Quote + non-italic citation, …).
+        if (properties.TryGetValue("bold", out var rBold) || properties.TryGetValue("font.bold", out rBold))
+        {
+            if (IsTruthy(rBold)) newRProps.Bold = new Bold();
+            else if (IsExplicitFalseAddOverride(rBold))
+                newRProps.Bold = new Bold { Val = OnOffValue.FromBoolean(false) };
+        }
         if ((properties.TryGetValue("bold.cs", out var rBoldCs) || properties.TryGetValue("font.bold.cs", out rBoldCs))
             && IsTruthy(rBoldCs))
             newRProps.BoldComplexScript = new BoldComplexScript();
-        if ((properties.TryGetValue("italic", out var rItalic) || properties.TryGetValue("font.italic", out rItalic)) && IsTruthy(rItalic))
-            newRProps.Italic = new Italic();
+        if (properties.TryGetValue("italic", out var rItalic) || properties.TryGetValue("font.italic", out rItalic))
+        {
+            if (IsTruthy(rItalic)) newRProps.Italic = new Italic();
+            else if (IsExplicitFalseAddOverride(rItalic))
+                newRProps.Italic = new Italic { Val = OnOffValue.FromBoolean(false) };
+        }
         if ((properties.TryGetValue("italic.cs", out var rItalicCs) || properties.TryGetValue("font.italic.cs", out rItalicCs))
             && IsTruthy(rItalicCs))
             newRProps.ItalicComplexScript = new ItalicComplexScript();
@@ -846,48 +1104,102 @@ public partial class WordHandler
             // CONSISTENCY(theme-color): Add run color accepts scheme color
             // names (accent1, dark2, hyperlink, …); same logic as
             // ApplyRunFormatting in WordHandler.Helpers.cs.
-            var rSchemeName = OfficeCli.Core.ParseHelpers.NormalizeSchemeColorName(rColor);
-            if (rSchemeName != null)
-                newRProps.Color = new Color { Val = "auto", ThemeColor = new EnumValue<ThemeColorValues>(new ThemeColorValues(rSchemeName)) };
+            // CONSISTENCY(color-auto): see WordHandler.Helpers.cs ApplyRunFormatting.
+            if (string.Equals(rColor, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                newRProps.Color = new Color { Val = "auto" };
+            }
             else
-                newRProps.Color = new Color { Val = SanitizeHex(rColor) };
+            {
+                var rSchemeName = OfficeCli.Core.ParseHelpers.NormalizeSchemeColorName(rColor);
+                if (rSchemeName != null)
+                    newRProps.Color = new Color { Val = "auto", ThemeColor = new EnumValue<ThemeColorValues>(new ThemeColorValues(rSchemeName)) };
+                else
+                    newRProps.Color = new Color { Val = SanitizeHex(rColor) };
+            }
         }
         if (properties.TryGetValue("underline", out var rUnderline) || properties.TryGetValue("font.underline", out rUnderline))
         {
             var ulVal = NormalizeUnderlineValue(rUnderline);
             newRProps.Underline = new Underline { Val = new UnderlineValues(ulVal) };
         }
-        if ((properties.TryGetValue("strike", out var rStrike)
+        // CONSISTENCY(toggle-explicit-false): see bold/italic above.
+        if (properties.TryGetValue("strike", out var rStrike)
                 || properties.TryGetValue("strikethrough", out rStrike)
                 || properties.TryGetValue("font.strike", out rStrike)
                 || properties.TryGetValue("font.strikethrough", out rStrike))
-            && IsTruthy(rStrike))
-            newRProps.Strike = new Strike();
+        {
+            if (IsTruthy(rStrike)) newRProps.Strike = new Strike();
+            else if (IsExplicitFalseAddOverride(rStrike))
+                newRProps.Strike = new Strike { Val = OnOffValue.FromBoolean(false) };
+        }
         if (properties.TryGetValue("highlight", out var rHighlight))
             newRProps.Highlight = new Highlight { Val = ParseHighlightColor(rHighlight) };
-        if ((properties.TryGetValue("caps", out var rCaps)
+        if (properties.TryGetValue("caps", out var rCaps)
                 || properties.TryGetValue("allcaps", out rCaps)
                 || properties.TryGetValue("allCaps", out rCaps))
-            && IsTruthy(rCaps))
-            newRProps.Caps = new Caps();
+        {
+            if (IsTruthy(rCaps)) newRProps.Caps = new Caps();
+            else if (IsExplicitFalseAddOverride(rCaps))
+                newRProps.Caps = new Caps { Val = OnOffValue.FromBoolean(false) };
+        }
         if (properties.TryGetValue("smallcaps", out var rSmallCaps) || properties.TryGetValue("smallCaps", out rSmallCaps))
         {
             if (IsTruthy(rSmallCaps)) newRProps.SmallCaps = new SmallCaps();
+            else if (IsExplicitFalseAddOverride(rSmallCaps))
+                newRProps.SmallCaps = new SmallCaps { Val = OnOffValue.FromBoolean(false) };
         }
-        if (properties.TryGetValue("dstrike", out var rDstrike) && IsTruthy(rDstrike))
-            newRProps.DoubleStrike = new DoubleStrike();
-        if (properties.TryGetValue("vanish", out var rVanish) && IsTruthy(rVanish))
-            newRProps.Vanish = new Vanish();
-        if (properties.TryGetValue("outline", out var rOutline) && IsTruthy(rOutline))
-            newRProps.Outline = new Outline();
-        if (properties.TryGetValue("shadow", out var rShadow) && IsTruthy(rShadow))
-            newRProps.Shadow = new Shadow();
-        if (properties.TryGetValue("emboss", out var rEmboss) && IsTruthy(rEmboss))
-            newRProps.Emboss = new Emboss();
-        if (properties.TryGetValue("imprint", out var rImprint) && IsTruthy(rImprint))
-            newRProps.Imprint = new Imprint();
-        if (properties.TryGetValue("noproof", out var rNoProof) && IsTruthy(rNoProof))
-            newRProps.NoProof = new NoProof();
+        if (properties.TryGetValue("dstrike", out var rDstrike))
+        {
+            if (IsTruthy(rDstrike)) newRProps.DoubleStrike = new DoubleStrike();
+            else if (IsExplicitFalseAddOverride(rDstrike))
+                newRProps.DoubleStrike = new DoubleStrike { Val = OnOffValue.FromBoolean(false) };
+        }
+        if (properties.TryGetValue("vanish", out var rVanish))
+        {
+            if (IsTruthy(rVanish)) newRProps.Vanish = new Vanish();
+            else if (IsExplicitFalseAddOverride(rVanish))
+                newRProps.Vanish = new Vanish { Val = OnOffValue.FromBoolean(false) };
+        }
+        if (properties.TryGetValue("outline", out var rOutline))
+        {
+            if (IsTruthy(rOutline)) newRProps.Outline = new Outline();
+            else if (IsExplicitFalseAddOverride(rOutline))
+                newRProps.Outline = new Outline { Val = OnOffValue.FromBoolean(false) };
+        }
+        if (properties.TryGetValue("shadow", out var rShadow))
+        {
+            if (IsTruthy(rShadow)) newRProps.Shadow = new Shadow();
+            else if (IsExplicitFalseAddOverride(rShadow))
+                newRProps.Shadow = new Shadow { Val = OnOffValue.FromBoolean(false) };
+        }
+        if (properties.TryGetValue("emboss", out var rEmboss))
+        {
+            if (IsTruthy(rEmboss)) newRProps.Emboss = new Emboss();
+            else if (IsExplicitFalseAddOverride(rEmboss))
+                newRProps.Emboss = new Emboss { Val = OnOffValue.FromBoolean(false) };
+        }
+        if (properties.TryGetValue("imprint", out var rImprint))
+        {
+            if (IsTruthy(rImprint)) newRProps.Imprint = new Imprint();
+            else if (IsExplicitFalseAddOverride(rImprint))
+                newRProps.Imprint = new Imprint { Val = OnOffValue.FromBoolean(false) };
+        }
+        if (properties.TryGetValue("noproof", out var rNoProof))
+        {
+            if (IsTruthy(rNoProof)) newRProps.NoProof = new NoProof();
+            else if (IsExplicitFalseAddOverride(rNoProof))
+                newRProps.NoProof = new NoProof { Val = OnOffValue.FromBoolean(false) };
+        }
+        // CONSISTENCY(add-set-symmetry): Set surfaces rStyle via the typed-attr
+        // fallback; Add must accept it explicitly because the bare-key fallback
+        // below skips dotless keys without warning. Without this, dump → batch
+        // round-trips silently strip every <w:rStyle/> (BUG-R2-05 / BT-5).
+        if (properties.TryGetValue("rStyle", out var rRStyle) || properties.TryGetValue("rstyle", out rRStyle))
+        {
+            if (!string.IsNullOrEmpty(rRStyle))
+                newRProps.RunStyle = new RunStyle { Val = rRStyle };
+        }
         if (properties.TryGetValue("rtl", out var rRtl) && IsTruthy(rRtl))
             ApplyRunFormatting(newRProps, "rtl", "true");
         // CONSISTENCY(canonical-key): accept "direction"=rtl|ltr as the
@@ -989,6 +1301,35 @@ public partial class WordHandler
         // gets routed through TypedAttributeFallback; failures land in
         // LastAddUnsupportedProps so the CLI surfaces a WARNING instead
         // of silently dropping. CONSISTENCY(add-set-symmetry).
+        // BUG-R7-06: bare run-level keys (bdr / kern / lang shortcuts) that
+        // the curated AddRun block above did not consume — route through
+        // ApplyRunFormatting so batch replay actually applies them instead
+        // of silently dropping. Mirrors the bare-key fallback in
+        // AddParagraph (line 670). CONSISTENCY(add-set-symmetry).
+        var addRunCuratedBare = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "type", "text", "html", "anchor", "anchorid",
+            "font", "size", "bold", "italic", "color", "highlight",
+            "underline", "strike", "strikethrough", "doublestrike", "dstrike",
+            "vanish", "outline", "shadow", "emboss", "imprint", "noproof",
+            "rtl", "vertalign", "superscript", "subscript",
+            "charspacing", "letterspacing",
+            "caps", "smallcaps", "allcaps",
+            "boldcs", "italiccs", "sizecs",
+            "shd", "shading",
+            "rstyle", "rStyle",
+            "textoutline", "textfill", "w14shadow", "w14glow", "w14reflection",
+            "field", "formula", "ref", "id",
+        };
+        foreach (var (key, value) in properties)
+        {
+            if (key.Contains('.')) continue;
+            if (addRunCuratedBare.Contains(key)) continue;
+            if (ApplyRunFormatting(newRProps, key, value)) continue;
+            // ApplyRunFormatting returned false → genuinely unsupported.
+            // Mark for the CLI WARNING surface (LastAddUnsupportedProps).
+            LastAddUnsupportedProps.Add(key);
+        }
         foreach (var (key, value) in properties)
         {
             if (!key.Contains('.')) continue;

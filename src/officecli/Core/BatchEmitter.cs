@@ -127,70 +127,101 @@ public static class BatchEmitter
     {
         var root = word.Get("/");
         if (root.Children == null) return;
+        // BUG-R4-T2: header/footer parts carry no `type` key on Get; the
+        // section's `headerRef.default|first|even` (and `footerRef.*`)
+        // entries are the only place the part's role is recorded. Build a
+        // reverse lookup so EmitHeaderFooterPart can emit the right
+        // `type` prop (default/first/even) instead of always emitting
+        // "default" — which on a doc with both default + first headers
+        // throws "Header of type 'default' already exists" on replay.
+        var headerPathToType = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var footerPathToType = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // BUG-R5-2 / R5-F2: headerRef.<type> / footerRef.<type> live on
+        // **section** nodes (see WordHandler.Query.cs:902), not on root.
+        // The earlier R4 fix scanned root.Format and silently found nothing,
+        // so every emitted header/footer was typed "default" — round-trip
+        // failed when a doc had both default + first headers. Walk all
+        // section children to build the path→type map.
+        void HarvestRefs(DocumentNode node)
+        {
+            foreach (var (key, val) in node.Format)
+            {
+                if (val == null) continue;
+                var s = val.ToString();
+                if (string.IsNullOrEmpty(s)) continue;
+                if (key.StartsWith("headerRef.", StringComparison.OrdinalIgnoreCase))
+                {
+                    var t = key["headerRef.".Length..];
+                    if (!headerPathToType.ContainsKey(s)) headerPathToType[s] = t;
+                }
+                else if (key.StartsWith("footerRef.", StringComparison.OrdinalIgnoreCase))
+                {
+                    var t = key["footerRef.".Length..];
+                    if (!footerPathToType.ContainsKey(s)) footerPathToType[s] = t;
+                }
+            }
+        }
+        HarvestRefs(root);
+        try
+        {
+            var sections = word.Query("section");
+            if (sections != null)
+            {
+                foreach (var sec in sections) HarvestRefs(sec);
+            }
+        }
+        catch { /* missing section info — fall through with default typing */ }
+
         int hIdx = 0, fIdx = 0;
         foreach (var child in root.Children)
         {
             if (child.Type == "header")
             {
                 hIdx++;
-                EmitHeaderFooterPart(word, child.Path, "header", hIdx, items);
+                var t = headerPathToType.TryGetValue(child.Path, out var ht) ? ht : "default";
+                EmitHeaderFooterPart(word, child.Path, "header", hIdx, items, t);
             }
             else if (child.Type == "footer")
             {
                 fIdx++;
-                EmitHeaderFooterPart(word, child.Path, "footer", fIdx, items);
+                var t = footerPathToType.TryGetValue(child.Path, out var ft) ? ft : "default";
+                EmitHeaderFooterPart(word, child.Path, "footer", fIdx, items, t);
             }
         }
     }
 
     private static void EmitHeaderFooterPart(WordHandler word, string sourcePath, string kind,
-                                             int targetIndex, List<BatchItem> items)
+                                             int targetIndex, List<BatchItem> items,
+                                             string subTypeOverride = "default")
     {
         var partNode = word.Get(sourcePath);
         var paras = (partNode.Children ?? new List<DocumentNode>())
             .Where(c => c.Type == "paragraph" || c.Type == "p")
             .ToList();
-        var subType = partNode.Format.TryGetValue("type", out var t) ? t?.ToString() ?? "default" : "default";
+        // partNode.Format does not expose `type`; the caller resolves the
+        // role (default/first/even) from the section's headerRef.* / footerRef.*
+        // map and passes it via subTypeOverride.
+        var subType = subTypeOverride;
 
-        // Seed the part with the first paragraph's text (AddHeader/AddFooter
-        // create a single auto paragraph and accept text/align/style on it).
-        // Multi-run first paragraphs collapse into a flat text string here —
-        // run-level formatting on the seed paragraph is a v0.5 lossy item.
-        var seedProps = new Dictionary<string, string> { ["type"] = subType };
-        if (paras.Count > 0)
-        {
-            // Get on /header[1] returns paragraph stubs without their run
-            // children — re-Get the first paragraph to surface its runs.
-            var firstPara = word.Get(paras[0].Path);
-            var firstRuns = (firstPara.Children ?? new List<DocumentNode>())
-                .Where(c => c.Type == "run" || c.Type == "r")
-                .ToList();
-            if (firstRuns.Count == 1 && !string.IsNullOrEmpty(firstRuns[0].Text))
-            {
-                seedProps["text"] = firstRuns[0].Text!;
-                var runProps = FilterEmittableProps(firstRuns[0].Format);
-                foreach (var (k, v) in runProps)
-                    if (!seedProps.ContainsKey(k)) seedProps[k] = v;
-            }
-            else if (firstRuns.Count >= 1)
-            {
-                // Multi-run: collapse plain text only, drop per-run formatting.
-                seedProps["text"] = string.Join("", firstRuns.Select(r => r.Text ?? ""));
-            }
-        }
+        // Create the part with just its role (default/first/even). AddHeader/
+        // AddFooter seed an empty auto paragraph; EmitParagraph(autoPresent:
+        // true) on paras[0] then routes through CollapseFieldChains so a
+        // PAGE-field header (the canonical case) round-trips as a typed
+        // `add field` row instead of being baked into static "1" text on the
+        // seed paragraph (BUG-R4-T3). Run-level formatting on multi-run
+        // first paragraphs is preserved by the per-run emit path below.
         items.Add(new BatchItem
         {
             Command = "add",
             Parent = "/",
             Type = kind,
-            Props = seedProps
+            Props = new Dictionary<string, string> { ["type"] = subType }
         });
 
-        // Additional paragraphs (>= 2nd) appended to the part directly.
         var partTargetPath = $"/{kind}[{targetIndex}]";
-        for (int p = 1; p < paras.Count; p++)
+        for (int p = 0; p < paras.Count; p++)
         {
-            EmitParagraph(word, paras[p].Path, partTargetPath, p + 1, items, autoPresent: false);
+            EmitParagraph(word, paras[p].Path, partTargetPath, p + 1, items, autoPresent: p == 0);
         }
     }
 
@@ -217,10 +248,11 @@ public static class BatchEmitter
             // The comment id is allocated by AddComment on the target side;
             // do not propagate the source id (would conflict on replay).
             props.Remove("id");
-            // Date is auto-stamped by the SDK on add — emitting it would
-            // overwrite the user's local "now" with the source moment, which
-            // is rarely the desired round-trip behaviour.
-            props.Remove("date");
+            // BUG-R7-04 (T-4): previously dropped `date` so dump→replay always
+            // re-stamped the comment with the SDK's "now". That breaks
+            // archival / audit-trail use cases where the source timestamp is
+            // load-bearing. Preserve it; AddComment accepts an explicit
+            // ISO-8601 date and the SDK will use it instead of stamping.
 
             items.Add(new BatchItem
             {
@@ -230,6 +262,40 @@ public static class BatchEmitter
                 Props = props
             });
         }
+    }
+
+    // Emit a body-level SDT (Content Control) as a typed `add /body --type sdt`
+    // row. Get exposes type, alias, tag, items (dropdown/combobox), editable,
+    // and the visible text — all of which AddSdt round-trips. Without this,
+    // SDTs were silently dropped from dump output (BUG-R2-06 / R2-3).
+    private static void EmitSdt(WordHandler word, string sourcePath, List<BatchItem> items)
+    {
+        DocumentNode sdt;
+        try { sdt = word.Get(sourcePath); }
+        catch { return; }
+
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Whitelist Get-canonical keys that AddSdt consumes. `editable` is a
+        // Get readback (negation of `lock`), the source-side `id` is allocated
+        // at creation, so neither is forwarded.
+        foreach (var key in new[] { "type", "alias", "tag", "items", "format" })
+        {
+            if (sdt.Format.TryGetValue(key, out var v) && v != null)
+            {
+                var s = v.ToString() ?? "";
+                if (s.Length > 0) props[key] = s;
+            }
+        }
+        if (!string.IsNullOrEmpty(sdt.Text))
+            props["text"] = sdt.Text!;
+
+        items.Add(new BatchItem
+        {
+            Command = "add",
+            Parent = "/body",
+            Type = "sdt",
+            Props = props
+        });
     }
 
     private static string? ExtractParaId(string anchorPath)
@@ -250,6 +316,16 @@ public static class BatchEmitter
         "pageStart", "pageNumFmt",
         "titlePage", "direction", "rtlGutter",
         "lineNumbers", "lineNumberCountBy",
+        // Multi-column section layout. Get exposes these as canonical keys
+        // (columns, columnSpace, columns.equalWidth) and Set's case table
+        // accepts all three (WordHandler.Set.SectionLayout.cs). Without them
+        // here, multi-column documents silently revert to single column on
+        // round-trip.
+        "columns", "columnSpace",
+        // Document-level final-section break type (oddPage / evenPage /
+        // continuous). Set / accepts section.type but the canonical Get
+        // surfaces it bare; emit so the trailing sectPr's type survives.
+        "section.type",
         // Document protection
         "protection", "protectionEnforced",
         // Document grid (CJK-aware line layout)
@@ -268,6 +344,9 @@ public static class BatchEmitter
     {
         "docDefaults.",
         "docGrid.",
+        // columns.equalWidth / columns.separator etc. roundtrip via the
+        // canonical dotted form Get already emits.
+        "columns.",
     };
 
     private static void EmitSection(WordHandler word, List<BatchItem> items)
@@ -321,6 +400,17 @@ public static class BatchEmitter
             props.Remove("docDefaults.font");
             props["docDefaults.font.latin"] = bareFont;
         }
+        // BUG-R6-05: BlankDocCreator stamps `Times New Roman` into
+        // docDefaults RunFonts. Source docs that omit the slot (use theme
+        // fonts) round-trip with the blank's TNR baked in. Force an
+        // explicit empty `docDefaults.font.latin=` so the Set path clears
+        // the blank's TNR back to absent. Same for docGrid.type which the
+        // blank sets to `default`.
+        if (!props.ContainsKey("docDefaults.font.latin")
+            && !props.ContainsKey("docDefaults.font"))
+        {
+            props["docDefaults.font.latin"] = "";
+        }
         if (props.Count == 0) return;
         items.Add(new BatchItem
         {
@@ -339,9 +429,15 @@ public static class BatchEmitter
         var styles = word.Query("style");
         foreach (var stub in styles)
         {
+            // CONSISTENCY(slash-in-style-id): style ids/names containing '/'
+            // produce paths like /styles/Style/With/Slash that the path
+            // parser splits on. Get fails. Fall back to the Query stub —
+            // we lose pPr/rPr details but at least the style stub
+            // (id/name/type/basedOn) round-trips, instead of dropping the
+            // style entirely (BUG BT-3).
             DocumentNode full;
             try { full = word.Get(stub.Path); }
-            catch { continue; }
+            catch { full = stub; }
             var props = FilterEmittableProps(full.Format);
             // Ensure id is present (Add requires it for /styles target).
             if (!props.ContainsKey("id") && !props.ContainsKey("styleId"))
@@ -349,6 +445,13 @@ public static class BatchEmitter
                 if (props.TryGetValue("name", out var n)) props["id"] = n;
                 else continue;
             }
+            // BUG-R6-03: built-in style ids (Normal / Heading1-9 / Title /
+            // …) collide with the blank template's reservations on a
+            // fresh batch target. AddStyle is now idempotent for those
+            // specific ids (upsert: drop existing + re-add). For non-
+            // built-in ids the strict "already exists" check still
+            // applies. Emit `add` uniformly so the wire format stays a
+            // simple `add`-only stream regardless of style provenance.
             items.Add(new BatchItem
             {
                 Command = "add",
@@ -356,6 +459,17 @@ public static class BatchEmitter
                 Type = "style",
                 Props = props
             });
+            // BUG-R4-T1: FilterEmittableProps drops the `tabs` scalar (it's a
+            // List<Dict>, not stringable). EmitParagraph compensates by
+            // emitting per-stop `add tab` rows; EmitStyles must do the same
+            // or paragraph-level custom tab stops on a style (Heading TOC
+            // leader tabs, etc.) silently disappear on round-trip.
+            var styleId = props.TryGetValue("id", out var sid) ? sid
+                : props.TryGetValue("styleId", out sid) ? sid : null;
+            if (styleId != null && full.Format.TryGetValue("tabs", out var styleTabs))
+            {
+                EmitTabStops($"/styles/{styleId}", styleTabs, items);
+            }
         }
     }
 
@@ -410,8 +524,24 @@ public static class BatchEmitter
             {
                 case "paragraph":
                 case "p":
-                    pIndex++;
-                    EmitParagraph(word, child.Path, "/body", pIndex, items, autoPresent: false, ctx);
+                    // BUG-R4-FUZZ-1: display-mode equations surface in
+                    // bodyNode.Children as type="paragraph" but the path
+                    // resolver addresses them as /body/oMathPara[N], NOT as
+                    // /body/p[N]. Incrementing pIndex for them would offset
+                    // every subsequent inline-child path (hyperlink/footnote/
+                    // run) by +1 per preceding equation, breaking round-trip.
+                    // Detect the wrapper via path and route to EmitParagraph
+                    // without bumping pIndex — EmitParagraph's equation branch
+                    // re-emits the equation as `add /body --type equation`.
+                    if (child.Path.Contains("/oMathPara[", StringComparison.OrdinalIgnoreCase))
+                    {
+                        EmitParagraph(word, child.Path, "/body", pIndex + 1, items, autoPresent: false, ctx);
+                    }
+                    else
+                    {
+                        pIndex++;
+                        EmitParagraph(word, child.Path, "/body", pIndex, items, autoPresent: false, ctx);
+                    }
                     break;
                 case "table":
                     tblIndex++;
@@ -424,8 +554,11 @@ public static class BatchEmitter
                     // that default and skip emitting section properties.
                     // Section emit is a follow-up.
                     break;
+                case "sdt":
+                    EmitSdt(word, child.Path, items);
+                    break;
                 default:
-                    // Unknown body-level child types (sdt, etc.) — skip for v0.5.
+                    // Unknown body-level child types — skip for v0.5.
                     break;
             }
         }
@@ -553,8 +686,15 @@ public static class BatchEmitter
             props.Remove("listStyle");
             props.Remove("start");
         }
-        var runs = (pNode.Children ?? new List<DocumentNode>())
-            .Where(c => c.Type == "run" || c.Type == "r" || c.Type == "picture")
+        // Collapse non-TOC field chains (fldChar(begin) + instrText(" PAGE ")
+        // + fldChar(separate) + display run(s) + fldChar(end)) into a single
+        // synthetic "field" entry. Without this collapse, the subsequent
+        // `runs` filter sees only the cached display run and emits the field
+        // value as static text — PAGE/REF/SEQ/HYPERLINK/NUMPAGES degrade to
+        // their evaluated string and stop auto-updating (BUG-R2-05 / R2-1).
+        var fieldEntries = CollapseFieldChains(pNode.Children ?? new List<DocumentNode>());
+        var runs = fieldEntries
+            .Where(c => c.Type == "run" || c.Type == "r" || c.Type == "picture" || c.Type == "field" || c.Type == "ptab")
             .ToList();
         var breaks = (pNode.Children ?? new List<DocumentNode>())
             .Where(c => c.Type == "break")
@@ -575,10 +715,51 @@ public static class BatchEmitter
         // re-emitted as `add hyperlink` below.
         bool singleRunIsHyperlink = runs.Count == 1 &&
             (runs[0].Format.ContainsKey("url") || runs[0].Format.ContainsKey("anchor"));
+        // BUG-R4-FUZZ-2: when a paragraph's sole run is a footnote/endnote
+        // reference (rStyle=FootnoteReference / EndnoteReference), collapsing
+        // the run into the paragraph prop bag emits `add p props={rStyle=...}`
+        // and drops the typed `add footnote/endnote` row entirely (Add does
+        // not consume rStyle on a paragraph; the note text is lost). Force
+        // the multi-run path so the dedicated note-emit branch below fires.
+        // BUG-R6-6: w14 text effects (textOutline / textFill / w14shadow /
+        // w14glow / w14reflection) live on a run but AddParagraph's
+        // ApplyRunFormatting fallback has no case for them — collapsing
+        // the single run would route the keys to the paragraph prop bag
+        // and they'd surface as UNSUPPORTED on replay (effect lost).
+        // Force the multi-run path so the effects ride along on `add r`.
+        bool singleRunHasW14 = runs.Count == 1 &&
+            (runs[0].Format.ContainsKey("w14shadow")
+             || runs[0].Format.ContainsKey("textOutline")
+             || runs[0].Format.ContainsKey("textFill")
+             || runs[0].Format.ContainsKey("w14glow")
+             || runs[0].Format.ContainsKey("w14reflection"));
+        bool singleRunIsNoteRef = runs.Count == 1 &&
+            runs[0].Format.TryGetValue("rStyle", out var srStyle)
+            && (string.Equals(srStyle?.ToString(), "FootnoteReference", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(srStyle?.ToString(), "EndnoteReference", StringComparison.OrdinalIgnoreCase));
+        // BUG-R7-05: a synthetic field run (from CollapseFieldChains) carries
+        // `instruction=PAGE` + `text="1"` — collapsing those onto the
+        // paragraph emits `set /footer[1]/p[1] instruction=PAGE text=1` which
+        // ApplyParagraphLevelProperty doesn't translate into an actual field
+        // chain (paragraph just becomes static text "1"). Force the multi-run
+        // path so the field run is re-emitted as `add field` and the chain
+        // is rebuilt on replay. Header parts hit this same code path; the
+        // bug surfaces in footers because header documents in earlier rounds
+        // happened to have multiple runs that already forced the multi-run
+        // branch.
+        bool singleRunIsField = runs.Count == 1 && runs[0].Type == "field";
         bool collapseSingleRun = runs.Count <= 1 &&
             !(runs.Count == 1 && runs[0].Type == "picture") &&
+            !(runs.Count == 1 && runs[0].Type == "ptab") &&
             !singleRunIsHyperlink &&
+            !singleRunIsNoteRef &&
+            !singleRunHasW14 &&
+            !singleRunIsField &&
             breaks.Count == 0;
+        // Pull paragraph-level tab stops out for per-stop `add tab` emit
+        // (FilterEmittableProps already drops the `tabs` scalar).
+        pNode.Format.TryGetValue("tabs", out var pTabs);
+
         if (collapseSingleRun)
         {
             if (runs.Count == 1)
@@ -617,6 +798,7 @@ public static class BatchEmitter
                     Props = props.Count > 0 ? props : null
                 });
             }
+            EmitTabStops($"{parentPath}/p[{targetIndex}]", pTabs, items);
             return;
         }
 
@@ -646,6 +828,7 @@ public static class BatchEmitter
         }
 
         var paraTargetPath = $"{parentPath}/p[{targetIndex}]";
+        EmitTabStops(paraTargetPath, pTabs, items);
 
         // Emit any break runs (page/column/textWrapping/line) the paragraph
         // carries. Without this, a break-only paragraph (the OOXML idiom
@@ -668,6 +851,64 @@ public static class BatchEmitter
 
         foreach (var run in runs)
         {
+            // Positional tab — Navigation surfaces ptab as its own run type
+            // with align/relativeTo/leader on Format. Without an explicit
+            // emit branch the runs filter would drop it (BUG-R6-4) and the
+            // round-trip would silently lose right-align/header-style tabs.
+            if (run.Type == "ptab")
+            {
+                var ptabProps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (run.Format.TryGetValue("align", out var pAlign) && pAlign != null)
+                    ptabProps["alignment"] = pAlign.ToString() ?? "";
+                if (run.Format.TryGetValue("relativeTo", out var pRel) && pRel != null)
+                    ptabProps["relativeTo"] = pRel.ToString() ?? "";
+                if (run.Format.TryGetValue("leader", out var pLead) && pLead != null)
+                    ptabProps["leader"] = pLead.ToString() ?? "";
+                items.Add(new BatchItem
+                {
+                    Command = "add",
+                    Parent = paraTargetPath,
+                    Type = "ptab",
+                    Props = ptabProps.Count > 0 ? ptabProps : null
+                });
+                continue;
+            }
+
+            // Synthetic field entry from CollapseFieldChains. Format carries
+            // `instruction` (the raw fldSimple/instrText string) and Text holds
+            // the cached display value. AddField parses the instruction code
+            // and rebuilds the fldChar chain on replay.
+            if (run.Type == "field")
+            {
+                var instr = run.Format.TryGetValue("instruction", out var iv)
+                    ? iv?.ToString() ?? "" : "";
+                var fieldProps = BuildFieldAddProps(instr, run.Text ?? "");
+                if (fieldProps != null)
+                {
+                    items.Add(new BatchItem
+                    {
+                        Command = "add",
+                        Parent = paraTargetPath,
+                        Type = "field",
+                        Props = fieldProps
+                    });
+                }
+                else if (!string.IsNullOrEmpty(run.Text))
+                {
+                    // Unparseable instruction — fall back to plain text so the
+                    // paragraph still renders the cached value rather than going
+                    // empty.
+                    items.Add(new BatchItem
+                    {
+                        Command = "add",
+                        Parent = paraTargetPath,
+                        Type = "r",
+                        Props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["text"] = run.Text! }
+                    });
+                }
+                continue;
+            }
+
             // Drawing-bearing runs surface as type=="picture" regardless of
             // whether the Drawing wraps an image (Blip) or a chart
             // (c:chart). Try the image path first; if there's no embedded
@@ -844,9 +1085,11 @@ public static class BatchEmitter
         // truncate the table shape and break later `set tc[N]` rows.
         var rowEffectiveWidths = new List<int>(rows.Count);
         var rowCellNodes = new List<List<DocumentNode>>(rows.Count);
+        var rowNodes = new List<DocumentNode>(rows.Count);
         foreach (var rowChild in rows)
         {
             var rowNode = word.Get(rowChild.Path);
+            rowNodes.Add(rowNode);
             var cells = (rowNode.Children ?? new List<DocumentNode>())
                 .Where(c => c.Type == "cell")
                 .ToList();
@@ -897,6 +1140,21 @@ public static class BatchEmitter
             : $"/body/tbl[{targetIndex}]";
         for (int r = 0; r < rows.Count; r++)
         {
+            // Emit row-level properties (header / height / height.rule) as a
+            // `set` on the row path — `add table` only seeds rows, it doesn't
+            // surface per-row props (BUG-R6-2). Without this, `dump→batch`
+            // silently strips repeating-header rows and explicit row heights.
+            var rowNode = rowNodes[r];
+            var rowProps = ExtractRowOnlyProps(rowNode.Format);
+            if (rowProps.Count > 0)
+            {
+                items.Add(new BatchItem
+                {
+                    Command = "set",
+                    Path = $"{tablePath}/tr[{r + 1}]",
+                    Props = rowProps
+                });
+            }
             var cells = rowCellNodes[r];
             for (int c = 0; c < cells.Count; c++)
             {
@@ -954,6 +1212,183 @@ public static class BatchEmitter
         }
     }
 
+    // Collapse OOXML complex field chains (fldChar(begin) + instrText + …
+    // + fldChar(end)) into a single synthetic "field" DocumentNode with
+    // Format["instruction"] (raw code) and Text (cached display value).
+    // Non-field children pass through untouched in original order. The TOC
+    // chain is handled by the dedicated EmitParagraph branch above and never
+    // reaches this collapsing step (early-return in that branch).
+    private static List<DocumentNode> CollapseFieldChains(List<DocumentNode> children)
+    {
+        var result = new List<DocumentNode>();
+        for (int i = 0; i < children.Count; i++)
+        {
+            var c = children[i];
+            bool isBegin = c.Type == "fieldChar"
+                && c.Format.TryGetValue("fieldCharType", out var fct)
+                && string.Equals(fct?.ToString(), "begin", StringComparison.OrdinalIgnoreCase);
+            if (!isBegin)
+            {
+                result.Add(c);
+                continue;
+            }
+
+            // Walk forward to find instruction text and end marker.
+            string instruction = "";
+            string display = "";
+            int end = -1;
+            for (int j = i + 1; j < children.Count; j++)
+            {
+                var k = children[j];
+                if (k.Type == "instrText")
+                {
+                    if (k.Format.TryGetValue("instruction", out var iv) && iv != null)
+                        instruction += iv.ToString();
+                    else if (!string.IsNullOrEmpty(k.Text))
+                        instruction += k.Text;
+                }
+                else if (k.Type == "fieldChar"
+                    && k.Format.TryGetValue("fieldCharType", out var ft)
+                    && string.Equals(ft?.ToString(), "end", StringComparison.OrdinalIgnoreCase))
+                {
+                    end = j;
+                    break;
+                }
+                else if (k.Type == "run" || k.Type == "r")
+                {
+                    // Cached display segments after fldChar(separate). Concatenate
+                    // their text — formatting on the display run is dropped (the
+                    // field renders fresh on replay).
+                    if (!string.IsNullOrEmpty(k.Text)) display += k.Text;
+                }
+            }
+            if (end < 0)
+            {
+                // Malformed (no end marker) — fall back to passing through.
+                result.Add(c);
+                continue;
+            }
+            var synth = new DocumentNode
+            {
+                Path = c.Path,
+                Type = "field",
+                Text = display,
+                Format = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["instruction"] = instruction.Trim()
+                }
+            };
+            result.Add(synth);
+            i = end;
+        }
+        return result;
+    }
+
+    // Build the prop bag AddField consumes from a parsed field instruction.
+    // Returns null when the instruction is empty or its first token is not a
+    // known field code; the caller falls back to a plain-text run for the
+    // cached display value so the paragraph still renders.
+    private static Dictionary<string, string>? BuildFieldAddProps(string instruction, string display)
+    {
+        if (string.IsNullOrWhiteSpace(instruction)) return null;
+        var trimmed = instruction.Trim();
+        // First whitespace-separated token is the field code.
+        var firstSpace = trimmed.IndexOfAny(new[] { ' ', '\t' });
+        var code = (firstSpace < 0 ? trimmed : trimmed[..firstSpace]).ToUpperInvariant();
+        var rest = firstSpace < 0 ? "" : trimmed[(firstSpace + 1)..].Trim();
+
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["fieldType"] = code
+        };
+        switch (code)
+        {
+            case "PAGE":
+            case "NUMPAGES":
+            case "AUTHOR":
+            case "TITLE":
+            case "SUBJECT":
+            case "FILENAME":
+            case "SECTION":
+            case "SECTIONPAGES":
+                break;
+            case "DATE":
+            case "TIME":
+            case "CREATEDATE":
+            case "SAVEDATE":
+            case "PRINTDATE":
+            {
+                // Preserve the `\@ "MMMM d, yyyy"` format switch so dump
+                // round-trips Word's locale-formatted date fields. Without
+                // this, BuildFieldAddProps dropped `rest` and replay
+                // produced a bare DATE field rendered in the default
+                // locale (BUG-R6-3). AddField consumes the value via
+                // --prop format=…
+                var fmtMatch = System.Text.RegularExpressions.Regex.Match(
+                    rest ?? "", "\\\\@\\s+\"([^\"]+)\"");
+                if (fmtMatch.Success)
+                    props["format"] = fmtMatch.Groups[1].Value;
+                break;
+            }
+            case "REF":
+            case "PAGEREF":
+            case "NOTEREF":
+            {
+                // First arg is the bookmark name (may be quoted).
+                var name = ExtractFirstArg(rest);
+                if (string.IsNullOrEmpty(name)) return null;
+                props["bookmarkName"] = name;
+                break;
+            }
+            case "SEQ":
+            {
+                var ident = ExtractFirstArg(rest);
+                if (string.IsNullOrEmpty(ident)) return null;
+                props["identifier"] = ident;
+                break;
+            }
+            case "MERGEFIELD":
+            {
+                var name = ExtractFirstArg(rest);
+                if (string.IsNullOrEmpty(name)) return null;
+                props["fieldName"] = name;
+                break;
+            }
+            case "HYPERLINK":
+            {
+                // Either `\l "anchor"` or a URL as the first arg.
+                var anchorMatch = System.Text.RegularExpressions.Regex.Match(rest, "\\\\l\\s+\"([^\"]+)\"");
+                if (anchorMatch.Success) props["anchor"] = anchorMatch.Groups[1].Value;
+                else
+                {
+                    var url = ExtractFirstArg(rest);
+                    if (string.IsNullOrEmpty(url)) return null;
+                    props["url"] = url;
+                }
+                break;
+            }
+            default:
+                // Unknown field code — let the generic field add try.
+                break;
+        }
+        if (!string.IsNullOrEmpty(display))
+            props["text"] = display;
+        return props;
+    }
+
+    private static string ExtractFirstArg(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        var t = s.TrimStart();
+        if (t.StartsWith('"'))
+        {
+            var end = t.IndexOf('"', 1);
+            return end > 0 ? t[1..end] : "";
+        }
+        var spc = t.IndexOfAny(new[] { ' ', '\t' });
+        return spc < 0 ? t : t[..spc];
+    }
+
     // Parse a TOC field instruction (` TOC \o "1-3" \h \u \z `) into the
     // prop bag AddToc accepts. AddToc emits the canonical instruction so
     // round-tripping the parsed props back through it lands at the same
@@ -970,6 +1405,14 @@ public static class BatchEmitter
         // \z suppresses page numbers; absence means pageNumbers=true
         props["pageNumbers"] = System.Text.RegularExpressions.Regex.IsMatch(instruction, "\\\\z\\b")
             ? "false" : "true";
+        // BUG-R5-03: \t = custom-style→level mapping ("Style;level,..."),
+        // \b = bookmark scope. Capture the quoted argument so AddToc can
+        // round-trip them; otherwise custom TOC switches were silently
+        // dropped on dump.
+        var ct = System.Text.RegularExpressions.Regex.Match(instruction, "\\\\t\\s+\"([^\"]+)\"");
+        if (ct.Success) props["customStyles"] = ct.Groups[1].Value;
+        var cb = System.Text.RegularExpressions.Regex.Match(instruction, "\\\\b\\s+\"([^\"]+)\"");
+        if (cb.Success) props["bookmark"] = cb.Groups[1].Value;
         return props;
     }
 
@@ -990,6 +1433,40 @@ public static class BatchEmitter
             if (CellOnlyKeys.Contains(key) ||
                 key.StartsWith("border.", StringComparison.OrdinalIgnoreCase) ||
                 key.StartsWith("padding.", StringComparison.OrdinalIgnoreCase))
+            {
+                filtered[key] = val;
+            }
+        }
+        return FilterEmittableProps(filtered);
+    }
+
+    // Row-level keys surfaced by Navigation.ReadRowProps. Used by EmitTable
+    // so dump→batch round-trips header rows / heights / cantSplit. Cell
+    // children are emitted separately via ExtractCellOnlyProps.
+    private static readonly HashSet<string> RowOnlyKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "header", "height", "cantSplit",
+    };
+
+    private static Dictionary<string, string> ExtractRowOnlyProps(Dictionary<string, object?> raw)
+    {
+        var filtered = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        bool heightExact = false;
+        if (raw.TryGetValue("height.rule", out var ruleObj) &&
+            string.Equals(ruleObj?.ToString(), "exact", StringComparison.OrdinalIgnoreCase))
+        {
+            heightExact = true;
+        }
+        foreach (var (key, val) in raw)
+        {
+            if (!RowOnlyKeys.Contains(key)) continue;
+            // height + height.rule=exact → SetElementTableRow expects key
+            // `height.exact`. Translate so dump output applies cleanly.
+            if (heightExact && string.Equals(key, "height", StringComparison.OrdinalIgnoreCase))
+            {
+                filtered["height.exact"] = val;
+            }
+            else
             {
                 filtered[key] = val;
             }
@@ -1041,33 +1518,146 @@ public static class BatchEmitter
         // for them, cause double-application. Drop the aliases so the
         // dump bag stays minimal.
         "styleId", "styleName",
+        // BUG-019: lineSpacing alone cannot distinguish AtLeast from Exact —
+        // SpacingConverter.FormatWordLineSpacing serializes both as "Npt".
+        // Set/AddParagraph now accept `lineRule` explicitly so it must flow
+        // through dump for AtLeast spacing to round-trip without silent
+        // downgrade to Exact (which clips tall glyphs).
     };
 
     private static Dictionary<string, string> FilterEmittableProps(Dictionary<string, object?> raw)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // CONSISTENCY(border-fold): Get emits `pbdr.bottom: single`,
+        // `pbdr.bottom.sz: 6`, `pbdr.bottom.color: #FF0000`, `pbdr.bottom.space: 1`
+        // as separate keys (mirrors `border.*` on Excel). Set accepts a single
+        // colon-encoded value `pbdr.bottom=single:6:#FF0000:1`. Without folding,
+        // the 2-segment key applies an empty-style border and the 3-segment
+        // subkeys hit unsupported (BUG BT-6: Title/Intense Quote lose bottom
+        // border on round-trip). Fold the 4 keys into one before validation.
+        var pbdrFold = new Dictionary<string, (string? style, string? sz, string? color, string? space)>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, val) in raw)
+        {
+            if (val == null) continue;
+            if (!key.StartsWith("pbdr.", StringComparison.OrdinalIgnoreCase)) continue;
+            var parts = key.Split('.');
+            if (parts.Length < 2) continue;
+            var side = $"{parts[0]}.{parts[1]}"; // pbdr.bottom
+            pbdrFold.TryGetValue(side, out var cur);
+            var sval = val.ToString() ?? "";
+            if (parts.Length == 2) cur.style = sval;
+            else if (parts.Length == 3)
+            {
+                switch (parts[2].ToLowerInvariant())
+                {
+                    case "sz": cur.sz = sval; break;
+                    case "color": cur.color = sval; break;
+                    case "space": cur.space = sval; break;
+                }
+            }
+            pbdrFold[side] = cur;
+        }
+
+        // BUG-R7-04: same fold for table `border.*` keys. Get emits
+        // `border.top: single`, `border.top.sz: 12`, `border.top.color: #000000`
+        // separately; Set accepts only the colon-encoded form
+        // `border.top=single;12;#000000;1`. Without folding, dump strips the
+        // 3-segment subkeys (see the explicit "drop them here" comment below)
+        // and round-trip silently downgrades real borders to default thin
+        // single. Fold sz/color/space into the 2-segment key.
+        var borderFold = new Dictionary<string, (string? style, string? sz, string? color, string? space)>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, val) in raw)
+        {
+            if (val == null) continue;
+            if (!key.StartsWith("border.", StringComparison.OrdinalIgnoreCase)) continue;
+            var parts = key.Split('.');
+            if (parts.Length < 2) continue;
+            var side = $"{parts[0]}.{parts[1]}"; // border.top
+            borderFold.TryGetValue(side, out var cur);
+            var sval = val.ToString() ?? "";
+            if (parts.Length == 2) cur.style = sval;
+            else if (parts.Length == 3)
+            {
+                switch (parts[2].ToLowerInvariant())
+                {
+                    case "sz": cur.sz = sval; break;
+                    case "color": cur.color = sval; break;
+                    case "space": cur.space = sval; break;
+                }
+            }
+            borderFold[side] = cur;
+        }
+
         foreach (var (key, val) in raw)
         {
             if (SkipKeys.Contains(key)) continue;
             if (key.StartsWith("effective.", StringComparison.OrdinalIgnoreCase)) continue;
             if (key.EndsWith(".cs.source", StringComparison.OrdinalIgnoreCase)) continue;
 
-            // BORDER subattr asymmetry: Get exposes `border.top: single` AND
-            // `border.top.sz: 4` / `border.top.color: 808080` as separate keys,
-            // but Set's case table stops at the 2-segment level — the 3-segment
-            // sub-attribute keys would be misrouted through ApplyTableBorders'
-            // dotted fallback and crash on `Invalid border style: '4'`. Drop
-            // them here as a known lossy projection until Set grows the
-            // matching cases (border width / color readback survive only via
-            // the main `border.*` style key for now).
-            if (key.StartsWith("border.", StringComparison.OrdinalIgnoreCase) &&
-                key.Count(ch => ch == '.') >= 2)
+            // pbdr fold: skip subkeys, rewrite the bare side key into colon form.
+            if (key.StartsWith("pbdr.", StringComparison.OrdinalIgnoreCase))
             {
+                var parts = key.Split('.');
+                if (parts.Length >= 3) continue; // subkey already folded
+                var side = $"{parts[0]}.{parts[1]}";
+                if (pbdrFold.TryGetValue(side, out var folded) && folded.style != null)
+                {
+                    // ParseBorderValue format: STYLE[;SIZE[;COLOR[;SPACE]]] — empties
+                    // for missing intermediates so positional parts stay aligned.
+                    var sz = folded.sz ?? "";
+                    var col = folded.color ?? "";
+                    var sp = folded.space ?? "";
+                    var v = folded.style!;
+                    if (folded.sz != null || folded.color != null || folded.space != null)
+                        v += ";" + sz;
+                    if (folded.color != null || folded.space != null)
+                        v += ";" + col;
+                    if (folded.space != null)
+                        v += ";" + sp;
+                    result[key] = v;
+                }
                 continue;
             }
 
+            // BUG-R7-04: fold border.* like pbdr.*. Skip the 3-segment subkeys
+            // (folded into the 2-segment side key below) and rewrite the bare
+            // side key into the colon-encoded form Set's ParseBorderValue
+            // expects.
+            if (key.StartsWith("border.", StringComparison.OrdinalIgnoreCase))
+            {
+                var bparts = key.Split('.');
+                if (bparts.Length >= 3) continue; // subkey already folded
+                var bside = $"{bparts[0]}.{bparts[1]}";
+                if (borderFold.TryGetValue(bside, out var folded) && folded.style != null)
+                {
+                    var sz = folded.sz ?? "";
+                    var col = folded.color ?? "";
+                    var sp = folded.space ?? "";
+                    var v = folded.style!;
+                    if (folded.sz != null || folded.color != null || folded.space != null)
+                        v += ";" + sz;
+                    if (folded.color != null || folded.space != null)
+                        v += ";" + col;
+                    if (folded.space != null)
+                        v += ";" + sp;
+                    result[key] = v;
+                }
+                continue;
+            }
+
+            // tabs is a List<Dict>, not a flat scalar. Both Add and Set ingest
+            // tab stops via the dedicated `add ... --type tab` command (one
+            // row per stop), not as a paragraph/style scalar prop. Skipping
+            // here avoids serializing the .NET list type name into the prop
+            // string (BUG-R2-01); paragraph emitters layer per-stop add rows
+            // separately.
+            if (string.Equals(key, "tabs", StringComparison.OrdinalIgnoreCase)) continue;
+
             if (val == null) continue;
-            var s = val switch
+            string s = val switch
             {
                 bool b => b ? "true" : "false",
                 _ => val.ToString() ?? ""
@@ -1075,5 +1665,27 @@ public static class BatchEmitter
             if (s.Length > 0) result[key] = s;
         }
         return result;
+    }
+
+    // Layer per-stop `add tab` rows under a parent path that already has the
+    // host paragraph/style created. tabs is the flat List<Dict> Get exposes.
+    private static void EmitTabStops(string parentPath, object? tabsVal, List<BatchItem> items)
+    {
+        if (tabsVal is not IEnumerable<Dictionary<string, object?>> list) return;
+        foreach (var t in list)
+        {
+            var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (t.TryGetValue("pos", out var p) && p != null) props["pos"] = p.ToString() ?? "";
+            if (t.TryGetValue("val", out var v) && v != null) props["val"] = v.ToString() ?? "";
+            if (t.TryGetValue("leader", out var l) && l != null) props["leader"] = l.ToString() ?? "";
+            if (props.Count == 0 || !props.ContainsKey("pos")) continue;
+            items.Add(new BatchItem
+            {
+                Command = "add",
+                Parent = parentPath,
+                Type = "tab",
+                Props = props
+            });
+        }
     }
 }

@@ -56,7 +56,18 @@ public partial class WordHandler
         long chartCy = properties.TryGetValue("height", out var chStr) ? ParseEmu(chStr) : 3600000;
 
         var docPropId = NextDocPropId();
-        var chartName = chartTitle ?? $"Chart {docPropId}";
+        // BUG-R7-02 (T-2): explicit `name` prop was previously ignored —
+        // dump emitted name=… on round-trip but Add silently dropped it,
+        // so the chart's shape name reverted to its title every replay.
+        // Honor caller intent first; fall back to title, then synthesize.
+        // CONSISTENCY(empty-string-fallback): mirror AddPicture's
+        // !IsNullOrEmpty guard — `??` only short-circuits on null, so a
+        // literal name="" would otherwise pin the chart's shape name to
+        // empty instead of falling through to title.
+        var chartName = (properties.TryGetValue("name", out var chartNameOverride)
+                         && !string.IsNullOrEmpty(chartNameOverride))
+            ? chartNameOverride
+            : (chartTitle ?? $"Chart {docPropId}");
 
         // Extended chart types (cx:chart) — funnel, treemap, sunburst, boxWhisker, histogram
         if (Core.ChartExBuilder.IsExtendedChartType(chartType))
@@ -306,11 +317,41 @@ public partial class WordHandler
             }
         }
 
-        var altText = properties.GetValueOrDefault("alt", Path.GetFileName(imgPath));
+        // BUG-R5-02: data URIs (data:image/png;base64,iVBOR...) contain
+        // multiple slashes inside the base64 payload, so Path.GetFileName
+        // returns a meaningless tail like "png;base64,iVBOR..." which then
+        // becomes both the picture name AND the alt text. Detect data: /
+        // base64-blob inputs and fall back to a neutral placeholder unless
+        // the caller supplied an explicit alt= or name=.
+        string DefaultPictureName()
+        {
+            if (string.IsNullOrEmpty(imgPath)) return "image";
+            if (imgPath.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) return "image";
+            // Heuristic for raw base64 (no scheme): no path separator and length
+            // is implausibly long for a real filename.
+            if (imgPath.Length > 256 && imgPath.IndexOf('/') < 0 && imgPath.IndexOf('\\') < 0) return "image";
+            try { return Path.GetFileName(imgPath); }
+            catch { return "image"; }
+        }
+        var altText = properties.TryGetValue("alt", out var altOverride) && !string.IsNullOrEmpty(altOverride)
+            ? altOverride
+            : (properties.TryGetValue("name", out var nameOverride) && !string.IsNullOrEmpty(nameOverride)
+                ? nameOverride
+                : DefaultPictureName());
 
         var imgDocPropId = NextDocPropId();
         Run imgRun;
-        if (properties.TryGetValue("anchor", out var anchorVal) && IsTruthy(anchorVal))
+        // BUG-R4-BT3: a non-"none" `wrap` value implies floating placement —
+        // wrap only has meaning on a <wp:anchor>. Previously, callers passing
+        // `wrap=square|tight|topBottom|behind|inFront` without an explicit
+        // `anchor=true` got an inline picture and the wrap was silently
+        // dropped (also affected dump round-trip of floating pictures).
+        bool wrapImpliesAnchor = properties.TryGetValue("wrap", out var implicitWrap)
+            && !string.IsNullOrEmpty(implicitWrap)
+            && !string.Equals(implicitWrap, "none", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(implicitWrap, "inline", StringComparison.OrdinalIgnoreCase);
+        if ((properties.TryGetValue("anchor", out var anchorVal) && IsTruthy(anchorVal))
+            || wrapImpliesAnchor)
         {
             var wrapType = properties.GetValueOrDefault("wrap", "none");
             long hPos = properties.TryGetValue("hposition", out var hPosStr) ? ParseEmu(hPosStr) : 0;

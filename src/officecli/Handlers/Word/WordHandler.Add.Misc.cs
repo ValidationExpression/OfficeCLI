@@ -403,6 +403,17 @@ public partial class WordHandler
             hlRProps.Bold = new Bold();
         if (properties.TryGetValue("italic", out var hlItalic) && IsTruthy(hlItalic))
             hlRProps.Italic = new Italic();
+        // CONSISTENCY(add-set-symmetry): hyperlink runs commonly bind to the
+        // built-in `Hyperlink` character style (rStyle=Hyperlink) so they
+        // pick up the document's hyperlink theme color/underline. Run Add
+        // and paragraph dump emit echo rStyle back; AddHyperlink must
+        // accept it on the wrapped run or batch replay strips it with an
+        // UNSUPPORTED warning. BUG-R4-BT5.
+        if (properties.TryGetValue("rStyle", out var hlRStyle) || properties.TryGetValue("rstyle", out hlRStyle))
+        {
+            if (!string.IsNullOrEmpty(hlRStyle))
+                hlRProps.RunStyle = new RunStyle { Val = hlRStyle };
+        }
         // CONSISTENCY(rtl-cascade): inherit pPr/bidi from the enclosing
         // paragraph onto the hyperlink's run rPr. Mirrors the cascade in
         // SetElementParagraph / Add.Text run insertion (R16-bt-3). Without
@@ -539,6 +550,18 @@ public partial class WordHandler
             "styleref" => $" STYLEREF \"{styleRefName}\" ",
             "docproperty" => $" DOCPROPERTY \"{docPropertyName}\" ",
             "if" => BuildIfFieldInstruction(properties),
+            // CONSISTENCY(field-add-symmetry): BatchEmitter.BuildFieldAddProps
+            // emits HYPERLINK fields as fieldType=HYPERLINK + url/anchor (+ text),
+            // never as a raw `instr`. Without a hyperlink case the default arm
+            // throws `Unknown field type 'hyperlink'` and (under the new
+            // continue-on-error default) the link is silently dropped on
+            // dump→batch round-trips of complex-field HYPERLINK chains.
+            "hyperlink" => properties.TryGetValue("anchor", out var hAnchor) && !string.IsNullOrEmpty(hAnchor)
+                ? $" HYPERLINK \\l \"{hAnchor}\" "
+                : (properties.TryGetValue("url", out var hUrl) && !string.IsNullOrEmpty(hUrl)
+                    ? $" HYPERLINK \"{hUrl}\" "
+                    : throw new ArgumentException(
+                        "HYPERLINK field requires either 'url' or 'anchor' property.")),
             // CONSISTENCY(canonical-keys): field.json declares `instr` as
             // the canonical raw-instruction key with `instruction` and
             // `code` as aliases. Help docs and AI prompts use `instr=`
@@ -741,6 +764,7 @@ public partial class WordHandler
         ["createdate"] = new[] { "format" },
         ["savedate"] = new[] { "format" },
         ["printdate"] = new[] { "format" },
+        ["hyperlink"] = new[] { "url", "anchor" },
     };
 
     // Universal props every fieldType accepts: routing keys, run rPr,
@@ -945,11 +969,8 @@ public partial class WordHandler
                     var ddl = new SdtContentDropDownList();
                     if (ciProps.TryGetValue("items", out var items))
                     {
-                        foreach (var item in items.Split(','))
-                        {
-                            var trimmed = item.Trim();
-                            ddl.AppendChild(new ListItem { DisplayText = trimmed, Value = trimmed });
-                        }
+                        foreach (var li in ParseSdtItems(items))
+                            ddl.AppendChild(li);
                     }
                     sdtProps.AppendChild(ddl);
                     break;
@@ -959,11 +980,8 @@ public partial class WordHandler
                     var cb = new SdtContentComboBox();
                     if (ciProps.TryGetValue("items", out var items))
                     {
-                        foreach (var item in items.Split(','))
-                        {
-                            var trimmed = item.Trim();
-                            cb.AppendChild(new ListItem { DisplayText = trimmed, Value = trimmed });
-                        }
+                        foreach (var li in ParseSdtItems(items))
+                            cb.AppendChild(li);
                     }
                     sdtProps.AppendChild(cb);
                     break;
@@ -1065,11 +1083,8 @@ public partial class WordHandler
                     var ddl = new SdtContentDropDownList();
                     if (ciProps.TryGetValue("items", out var items))
                     {
-                        foreach (var item in items.Split(','))
-                        {
-                            var trimmed = item.Trim();
-                            ddl.AppendChild(new ListItem { DisplayText = trimmed, Value = trimmed });
-                        }
+                        foreach (var li in ParseSdtItems(items))
+                            ddl.AppendChild(li);
                     }
                     sdtProps.AppendChild(ddl);
                     break;
@@ -1079,11 +1094,8 @@ public partial class WordHandler
                     var cb = new SdtContentComboBox();
                     if (ciProps.TryGetValue("items", out var items))
                     {
-                        foreach (var item in items.Split(','))
-                        {
-                            var trimmed = item.Trim();
-                            cb.AppendChild(new ListItem { DisplayText = trimmed, Value = trimmed });
-                        }
+                        foreach (var li in ParseSdtItems(items))
+                            cb.AppendChild(li);
                     }
                     sdtProps.AppendChild(cb);
                     break;
@@ -1245,5 +1257,36 @@ public partial class WordHandler
         var createdIdx = siblings.IndexOf(created) + 1;
         var resultPath = $"{parentPath}/{created.LocalName}[{createdIdx}]";
         return resultPath;
+    }
+
+    /// <summary>
+    /// Parse the SDT --prop items= argument into ListItem children.
+    /// BUG-R5-07: previously the comma-split tokens were used as both
+    /// displayText and value, which is fine for "Draft,Review,Final" but
+    /// erases the distinct value attribute that real Word documents use
+    /// ("Draft|DRAFT,Review|REVIEW,Final|FINAL"). dump emits this
+    /// pipe-separated form when DisplayText differs from Value; accept it
+    /// here so add round-trips correctly. A bare token (no `|`) keeps the
+    /// old behavior — display == value.
+    /// </summary>
+    private static IEnumerable<ListItem> ParseSdtItems(string items)
+    {
+        foreach (var raw in items.Split(','))
+        {
+            var trimmed = raw.Trim();
+            if (string.IsNullOrEmpty(trimmed)) continue;
+            string display, value;
+            var pipeIdx = trimmed.IndexOf('|');
+            if (pipeIdx > 0)
+            {
+                display = trimmed[..pipeIdx].Trim();
+                value = trimmed[(pipeIdx + 1)..].Trim();
+            }
+            else
+            {
+                display = value = trimmed;
+            }
+            yield return new ListItem { DisplayText = display, Value = value };
+        }
     }
 }

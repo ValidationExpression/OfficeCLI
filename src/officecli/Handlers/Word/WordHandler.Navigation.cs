@@ -14,6 +14,28 @@ public partial class WordHandler
 {
     // ==================== Navigation ====================
 
+    /// <summary>
+    /// OOXML toggle element (Bold, Italic, Strike, Caps, …) is "ON" when the
+    /// element exists AND its <c>w:val</c> attribute is either absent or
+    /// truthy. <c>&lt;w:b/&gt;</c> means ON; <c>&lt;w:b w:val="0"/&gt;</c>
+    /// and <c>&lt;w:b w:val="false"/&gt;</c> mean explicitly OFF. Pure
+    /// null-checks on the element flip the OFF case back to ON, corrupting
+    /// canonical Get readback (BUG-R2-04). Use this helper at every
+    /// toggle-readback site so the override is honored.
+    /// </summary>
+    private static bool IsToggleOn(Bold? t)   => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(Italic? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(Strike? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(DoubleStrike? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(Caps? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(SmallCaps? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(Vanish? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(Outline? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(Shadow? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(Emboss? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(Imprint? t) => t != null && (t.Val == null || t.Val.Value);
+    private static bool IsToggleOn(NoProof? t) => t != null && (t.Val == null || t.Val.Value);
+
     private DocumentNode GetRootNode(int depth)
     {
         var node = new DocumentNode { Path = "/", Type = "document" };
@@ -1380,11 +1402,11 @@ public partial class WordHandler
                 if (fsVal != null && !node.Format.ContainsKey("size"))
                     node.Format["size"] = $"{int.Parse(fsVal) / 2.0:0.##}pt";
 
-                var boldEl = rp?.Bold ?? (OpenXmlLeafElement?)markRp?.GetFirstChild<Bold>();
-                if (boldEl != null && !node.Format.ContainsKey("bold")) node.Format["bold"] = true;
+                var boldEl = rp?.Bold ?? markRp?.GetFirstChild<Bold>();
+                if (boldEl != null && !node.Format.ContainsKey("bold")) node.Format["bold"] = IsToggleOn(boldEl);
 
-                var italicEl = rp?.Italic ?? (OpenXmlLeafElement?)markRp?.GetFirstChild<Italic>();
-                if (italicEl != null && !node.Format.ContainsKey("italic")) node.Format["italic"] = true;
+                var italicEl = rp?.Italic ?? markRp?.GetFirstChild<Italic>();
+                if (italicEl != null && !node.Format.ContainsKey("italic")) node.Format["italic"] = IsToggleOn(italicEl);
 
                 // Complex-script readback (font.cs / size.cs / bold.cs / italic.cs).
                 // See WordHandler.I18n.cs.
@@ -1470,8 +1492,8 @@ public partial class WordHandler
             }
             var size = GetRunFontSize(run);
             if (size != null) node.Format["size"] = size;
-            if (run.RunProperties?.Bold != null) node.Format["bold"] = true;
-            if (run.RunProperties?.Italic != null) node.Format["italic"] = true;
+            if (run.RunProperties?.Bold != null) node.Format["bold"] = IsToggleOn(run.RunProperties.Bold);
+            if (run.RunProperties?.Italic != null) node.Format["italic"] = IsToggleOn(run.RunProperties.Italic);
             // Complex-script readback (font.cs / size.cs / bold.cs / italic.cs).
             // See WordHandler.I18n.cs.
             ReadComplexScriptRunFormatting(run.RunProperties, null, node.Format);
@@ -1481,17 +1503,17 @@ public partial class WordHandler
             // CONSISTENCY(underline-color): backfilled from style Get edc8f884.
             if (run.RunProperties?.Underline?.Color?.Value != null)
                 node.Format["underline.color"] = ParseHelpers.FormatHexColor(run.RunProperties.Underline.Color.Value);
-            if (run.RunProperties?.Strike != null) node.Format["strike"] = true;
+            if (run.RunProperties?.Strike != null) node.Format["strike"] = IsToggleOn(run.RunProperties.Strike);
             if (run.RunProperties?.Highlight?.Val != null) node.Format["highlight"] = run.RunProperties.Highlight.Val.InnerText;
-            if (run.RunProperties?.Caps != null) node.Format["caps"] = true;
-            if (run.RunProperties?.SmallCaps != null) node.Format["smallcaps"] = true;
-            if (run.RunProperties?.DoubleStrike != null) node.Format["dstrike"] = true;
-            if (run.RunProperties?.Vanish != null) node.Format["vanish"] = true;
-            if (run.RunProperties?.Outline != null) node.Format["outline"] = true;
-            if (run.RunProperties?.Shadow != null) node.Format["shadow"] = true;
-            if (run.RunProperties?.Emboss != null) node.Format["emboss"] = true;
-            if (run.RunProperties?.Imprint != null) node.Format["imprint"] = true;
-            if (run.RunProperties?.NoProof != null) node.Format["noproof"] = true;
+            if (run.RunProperties?.Caps != null) node.Format["caps"] = IsToggleOn(run.RunProperties.Caps);
+            if (run.RunProperties?.SmallCaps != null) node.Format["smallcaps"] = IsToggleOn(run.RunProperties.SmallCaps);
+            if (run.RunProperties?.DoubleStrike != null) node.Format["dstrike"] = IsToggleOn(run.RunProperties.DoubleStrike);
+            if (run.RunProperties?.Vanish != null) node.Format["vanish"] = IsToggleOn(run.RunProperties.Vanish);
+            if (run.RunProperties?.Outline != null) node.Format["outline"] = IsToggleOn(run.RunProperties.Outline);
+            if (run.RunProperties?.Shadow != null) node.Format["shadow"] = IsToggleOn(run.RunProperties.Shadow);
+            if (run.RunProperties?.Emboss != null) node.Format["emboss"] = IsToggleOn(run.RunProperties.Emboss);
+            if (run.RunProperties?.Imprint != null) node.Format["imprint"] = IsToggleOn(run.RunProperties.Imprint);
+            if (run.RunProperties?.NoProof != null) node.Format["noproof"] = IsToggleOn(run.RunProperties.NoProof);
             if (run.RunProperties?.RightToLeftText != null)
             {
                 // <w:rtl/> with no Val attribute implies true; <w:rtl w:val="0"/>
@@ -1519,22 +1541,21 @@ public partial class WordHandler
             // didn't consume. Symmetric with the Set-side TryCreateTypedChild
             // fallback in SetElementRun (WordHandler.Set.Element.cs).
             FillUnknownChildProps(run.RunProperties, node);
-            // Image properties if run contains a Drawing
+            // Image properties if run contains a Drawing.
+            // BUG-R5-T3: previously this branch wrote only id/name/alt/width/
+            // height/relId — wrap/hPosition/vPosition/hRelative/vRelative/
+            // behindText for floating pictures were silently dropped, which
+            // also broke dump→batch round-trip (BatchEmitter relies on Get).
+            // Reuse CreateImageNode (the canonical picture-node builder) and
+            // merge its Format bag into the run node.
             var runDrawing = run.GetFirstChild<Drawing>();
             if (runDrawing != null)
             {
-                node.Type = "picture";
-                var docProps = runDrawing.Descendants<DW.DocProperties>().FirstOrDefault();
-                if (docProps?.Id?.HasValue == true) node.Format["id"] = docProps.Id.Value;
-                if (docProps?.Name?.Value != null) node.Format["name"] = docProps.Name.Value;
-                if (docProps?.Description?.Value != null) node.Format["alt"] = docProps.Description.Value;
-                var extent = runDrawing.Descendants<DW.Extent>().FirstOrDefault();
-                if (extent?.Cx != null) node.Format["width"] = $"{extent.Cx.Value / 360000.0:F1}cm";
-                if (extent?.Cy != null) node.Format["height"] = $"{extent.Cy.Value / 360000.0:F1}cm";
-                // Expose the image part rel id so `get --save` can extract it.
-                var runBlip = runDrawing.Descendants<DocumentFormat.OpenXml.Drawing.Blip>().FirstOrDefault();
-                if (runBlip?.Embed?.Value != null)
-                    node.Format["relId"] = runBlip.Embed.Value;
+                var picNode = CreateImageNode(runDrawing, run, path);
+                node.Type = picNode.Type;
+                if (!string.IsNullOrEmpty(picNode.Text)) node.Text = picNode.Text;
+                foreach (var kv in picNode.Format)
+                    node.Format[kv.Key] = kv.Value;
             }
             // OLE object if run contains an EmbeddedObject. The underlying
             // logic is the same as CreateOleNode — reuse it so Get/Query
@@ -1735,15 +1756,15 @@ public partial class WordHandler
                 if (rp.RunFonts?.Ascii?.Value != null) node.Format["font"] = rp.RunFonts.Ascii.Value;
                 if (rp.FontSize?.Val?.Value != null)
                     node.Format["size"] = $"{int.Parse(rp.FontSize.Val.Value) / 2.0:0.##}pt";
-                if (rp.Bold != null) node.Format["bold"] = true;
-                if (rp.Italic != null) node.Format["italic"] = true;
+                if (rp.Bold != null) node.Format["bold"] = IsToggleOn(rp.Bold);
+                if (rp.Italic != null) node.Format["italic"] = IsToggleOn(rp.Italic);
                 if (rp.Color?.ThemeColor?.HasValue == true) node.Format["color"] = rp.Color.ThemeColor.InnerText;
                 else if (rp.Color?.Val?.Value != null) node.Format["color"] = ParseHelpers.FormatHexColor(rp.Color.Val.Value);
                 if (rp.Underline?.Val != null) node.Format["underline"] = rp.Underline.Val.InnerText;
                 // CONSISTENCY(underline-color): backfilled from style Get edc8f884.
                 if (rp.Underline?.Color?.Value != null)
                     node.Format["underline.color"] = ParseHelpers.FormatHexColor(rp.Underline.Color.Value);
-                if (rp.Strike != null) node.Format["strike"] = true;
+                if (rp.Strike != null) node.Format["strike"] = IsToggleOn(rp.Strike);
                 if (rp.Highlight?.Val != null) node.Format["highlight"] = rp.Highlight.Val.InnerText;
             }
         }
@@ -1985,7 +2006,17 @@ public partial class WordHandler
                 var listItems = ddl?.Elements<ListItem>() ?? combo?.Elements<ListItem>();
                 if (listItems != null)
                 {
-                    var items = listItems.Select(li => li.DisplayText?.Value ?? li.Value?.Value ?? "").ToList();
+                    // BUG-R5-07: SDT ListItems carry distinct DisplayText and
+                    // Value attrs. Real Word docs commonly differ (e.g.
+                    // "Draft|DRAFT"). Emit the pipe form when value !=
+                    // displayText so dump→add round-trips. ParseSdtItems on
+                    // the Add side accepts both bare and piped forms.
+                    var items = listItems.Select(li =>
+                    {
+                        var disp = li.DisplayText?.Value ?? li.Value?.Value ?? "";
+                        var val = li.Value?.Value ?? li.DisplayText?.Value ?? "";
+                        return disp == val ? disp : $"{disp}|{val}";
+                    }).ToList();
                     if (items.Count > 0) node.Format["items"] = string.Join(",", items);
                 }
             }
@@ -2031,7 +2062,17 @@ public partial class WordHandler
                 var listItems = ddl?.Elements<ListItem>() ?? combo?.Elements<ListItem>();
                 if (listItems != null)
                 {
-                    var items = listItems.Select(li => li.DisplayText?.Value ?? li.Value?.Value ?? "").ToList();
+                    // BUG-R5-07: SDT ListItems carry distinct DisplayText and
+                    // Value attrs. Real Word docs commonly differ (e.g.
+                    // "Draft|DRAFT"). Emit the pipe form when value !=
+                    // displayText so dump→add round-trips. ParseSdtItems on
+                    // the Add side accepts both bare and piped forms.
+                    var items = listItems.Select(li =>
+                    {
+                        var disp = li.DisplayText?.Value ?? li.Value?.Value ?? "";
+                        var val = li.Value?.Value ?? li.DisplayText?.Value ?? "";
+                        return disp == val ? disp : $"{disp}|{val}";
+                    }).ToList();
                     if (items.Count > 0) node.Format["items"] = string.Join(",", items);
                 }
             }
@@ -2299,8 +2340,8 @@ public partial class WordHandler
             var rPr = firstRun.RunProperties;
             if (rPr.RunFonts?.Ascii?.Value != null) node.Format["font"] = rPr.RunFonts.Ascii.Value;
             if (rPr.FontSize?.Val?.Value != null) node.Format["size"] = $"{int.Parse(rPr.FontSize.Val.Value) / 2.0:0.##}pt";
-            if (rPr.Bold != null) node.Format["bold"] = true;
-            if (rPr.Italic != null) node.Format["italic"] = true;
+            if (rPr.Bold != null) node.Format["bold"] = IsToggleOn(rPr.Bold);
+            if (rPr.Italic != null) node.Format["italic"] = IsToggleOn(rPr.Italic);
             if (rPr.Color?.Val?.Value != null) node.Format["color"] = ParseHelpers.FormatHexColor(rPr.Color.Val.Value);
             else if (rPr.Color?.ThemeColor?.HasValue == true) node.Format["color"] = rPr.Color.ThemeColor.InnerText;
             if (rPr.Underline?.Val != null) node.Format["underline"] = rPr.Underline.Val.InnerText;
@@ -2349,6 +2390,15 @@ public partial class WordHandler
         // left behind by Set bold=false (etc.) would surface as `rPr: true` via
         // the long-tail fallback. fuzz-1.
         "rPr",
+        // BUG-R7-09 / F-3: <w:lang/> is a multi-slot element (val=latin /
+        // eastAsia / bidi). The curated reader emits each slot as
+        // lang.latin / lang.ea / lang.cs. Word/WPS occasionally write a bare
+        // <w:lang/> with no attributes as a "reset to default language"
+        // sentinel — the long-tail fallback would then surface that as
+        // `lang: true`, which Set parses as a BCP-47 tag and rejects with
+        // "Invalid BCP-47 'true'". Skip lang here so the canonical .latin/
+        // .ea/.cs reader stays the single source of truth.
+        "lang",
     };
 
     // Long-tail OOXML fallback: walk a properties container (rPr/pPr/...) and

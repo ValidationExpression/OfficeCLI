@@ -14,12 +14,22 @@ static partial class CommandBuilder
         var batchFileArg = new Argument<FileInfo>("file") { Description = "Office document path" };
         var batchInputOpt = new Option<FileInfo?>("--input") { Description = "JSON file containing batch commands. If omitted, reads from stdin" };
         var batchCommandsOpt = new Option<string?>("--commands") { Description = "Inline JSON array of batch commands (alternative to --input or stdin)" };
-        var batchForceOpt = new Option<bool>("--force") { Description = "Continue execution even if a command fails (default: stop on first error)" };
+        // BUG-R4-BT2: default flipped to continue-on-error. A 700-command
+        // dump replay losing 80% of the document on the first failing item
+        // (e.g. one unsupported prop) is a far worse default than reporting
+        // the failure and letting the rest of the batch through. Errors are
+        // still surfaced individually (BatchResult.Error) and the overall
+        // exit code is 1 if any item failed, so callers can still tell
+        // "everything succeeded". `--stop-on-error` opts back into the
+        // strict abort-on-first-failure flow for callers who depend on it.
+        var batchForceOpt = new Option<bool>("--force") { Description = "Deprecated alias for the default continue-on-error mode (kept for compatibility)" };
+        var batchStopOpt = new Option<bool>("--stop-on-error") { Description = "Abort the batch as soon as any command fails (default: continue and report per-item errors)" };
         var batchCommand = new Command("batch", "Execute multiple commands from a JSON array (one open/save cycle)");
         batchCommand.Add(batchFileArg);
         batchCommand.Add(batchInputOpt);
         batchCommand.Add(batchCommandsOpt);
         batchCommand.Add(batchForceOpt);
+        batchCommand.Add(batchStopOpt);
         batchCommand.Add(jsonOption);
 
         batchCommand.SetAction(result => { var json = result.GetValue(jsonOption); return SafeRun(() =>
@@ -27,9 +37,33 @@ static partial class CommandBuilder
             var file = result.GetValue(batchFileArg)!;
             var inputFile = result.GetValue(batchInputOpt);
             var inlineCommands = result.GetValue(batchCommandsOpt);
-            var stopOnError = !result.GetValue(batchForceOpt);
+            // Default: continue on error. --stop-on-error flips it to strict.
+            // --force still acts as the docx-protection bypass (matches set
+            // --force semantics) but no longer doubles as the continue-on-
+            // error switch.
+            var stopOnError = result.GetValue(batchStopOpt);
+            var forceFlag = result.GetValue(batchForceOpt);
 
             string jsonText;
+            // BUG-R7-09 (F-6): previously --commands/--input/stdin were
+            // silently prioritized in that order — passing two of them at
+            // once dropped the lower-priority source with no warning, so
+            // scripts could fail subtly when an agent piped data into a
+            // command that already had --commands set. Reject the
+            // combination loudly. (Detect stdin via Console.IsInputRedirected
+            // to avoid spurious failures from interactive terminals.)
+            bool stdinHasInput = Console.IsInputRedirected;
+            if (inlineCommands != null && inputFile != null)
+                throw new ArgumentException(
+                    "batch: --commands and --input are mutually exclusive. Pick one source.");
+            if ((inlineCommands != null || inputFile != null) && stdinHasInput
+                && Environment.GetEnvironmentVariable("OFFICECLI_BATCH_ALLOW_STDIN_REDIRECT") == null)
+            {
+                Console.Error.WriteLine(
+                    "Warning: batch is reading from --commands/--input but stdin is also redirected; "
+                    + "stdin will be ignored. Pass only one source to silence this warning, or set "
+                    + "OFFICECLI_BATCH_ALLOW_STDIN_REDIRECT=1.");
+            }
             if (inlineCommands != null)
             {
                 jsonText = inlineCommands;
@@ -50,6 +84,19 @@ static partial class CommandBuilder
 
             // Pre-validate: check for unknown JSON fields before deserializing
             using var jsonDoc = System.Text.Json.JsonDocument.Parse(jsonText);
+            // BUG-R7-10: when the batch input is a JSON object/string/etc.
+            // (not an array), Deserialize<List<BatchItem>> threw a generic
+            // JsonException whose message exposed the C# generic type name
+            // (`System.Collections.Generic.List`1[OfficeCli.BatchItem]`).
+            // Convert it to a human-friendly error first so AI agents and
+            // humans see a stable, model-agnostic diagnostic.
+            if (jsonDoc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array
+                && jsonDoc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null)
+            {
+                throw new ArgumentException(
+                    $"Batch input must be a JSON array. Got: {jsonDoc.RootElement.ValueKind.ToString().ToLowerInvariant()}. "
+                    + "Wrap a single item like [{\"command\":\"get\",\"path\":\"/\"}].");
+            }
             if (jsonDoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
             {
                 int ri = 0;
@@ -64,7 +111,7 @@ static partial class CommandBuilder
                                 unknown.Add(prop.Name);
                         }
                         if (unknown.Count > 0)
-                            throw new ArgumentException($"batch item[{ri}]: unknown field(s) {string.Join(", ", unknown.Select(f => $"\"{f}\""))}. Valid fields: command, parent, path, type, from, index, to, props, selector, text, mode, depth, part, xpath, action, xml");
+                            throw new ArgumentException($"batch item[{ri}]: unknown field(s) {string.Join(", ", unknown.Select(f => $"\"{f}\""))}. Valid fields: {string.Join(", ", BatchItem.KnownFields)}");
                     }
                     ri++;
                 }
@@ -83,7 +130,32 @@ static partial class CommandBuilder
             }
             if (items.Count == 0)
             {
-                PrintBatchResults(new List<BatchResult>(), json, 0);
+                // BUG-R6-07: empty command array previously short-circuited
+                // before the file-existence check, so
+                //   officecli batch /missing.docx --commands '[]' --json
+                // returned a clean zero-result success instead of the
+                // expected file_not_found. Validate the target file
+                // exists first so empty-array semantics match the
+                // non-empty path's diagnostics.
+                if (!file.Exists)
+                    throw new CliException($"File not found: {file.FullName}")
+                        { Code = "file_not_found" };
+                // BUG-R7-09: in --json mode an empty/null batch input
+                // previously skipped the {"success":...,"data":{...}}
+                // envelope used by the populated-array path, so AI agents
+                // saw a missing `success` key. Apply the same envelope
+                // wrap here for shape parity.
+                if (json)
+                {
+                    using var sw = new System.IO.StringWriter();
+                    PrintBatchResults(new List<BatchResult>(), json, 0, sw);
+                    var inner = sw.ToString().TrimEnd('\n', '\r');
+                    Console.WriteLine(OfficeCli.Core.OutputFormatter.WrapEnvelope(inner));
+                }
+                else
+                {
+                    PrintBatchResults(new List<BatchResult>(), json, 0);
+                }
                 return 0;
             }
 
@@ -99,7 +171,7 @@ static partial class CommandBuilder
             // CONSISTENCY(docx-protection): if you change the protection
             // semantics, also update CommandBuilder.Set.cs at the matching
             // CheckDocxProtection call site.
-            var force = !stopOnError;
+            var force = forceFlag;
             if (!force && file.Extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
             {
                 foreach (var batchItem in items)
@@ -133,7 +205,8 @@ static partial class CommandBuilder
                     Args =
                     {
                         ["batchJson"] = jsonText,
-                        ["force"] = force.ToString()
+                        ["force"] = force.ToString(),
+                        ["stopOnError"] = stopOnError.ToString()
                     }
                 };
                 // CONSISTENCY(resident-two-step): long connectTimeoutMs so the
@@ -171,7 +244,23 @@ static partial class CommandBuilder
                     if (stopOnError) break;
                 }
             }
-            PrintBatchResults(batchResults, json, items.Count);
+            // BUG-R6-02: in --json mode the non-resident path emitted the raw
+            // {"results":...,"summary":...} body while the resident path
+            // wrapped it in {"success":..., "data":{...}} (resident server
+            // calls OutputFormatter.WrapEnvelope on any JSON-shaped stdout).
+            // Capture PrintBatchResults output and apply the same envelope
+            // here so callers see the same shape regardless of resident state.
+            if (json)
+            {
+                using var sw = new System.IO.StringWriter();
+                PrintBatchResults(batchResults, json, items.Count, sw);
+                var inner = sw.ToString().TrimEnd('\n', '\r');
+                Console.WriteLine(OfficeCli.Core.OutputFormatter.WrapEnvelope(inner));
+            }
+            else
+            {
+                PrintBatchResults(batchResults, json, items.Count);
+            }
             if (batchResults.Any(r => r.Success))
                 NotifyWatch(handler, file.FullName, null);
             return batchResults.Any(r => !r.Success) ? 1 : 0;

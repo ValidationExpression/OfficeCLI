@@ -389,6 +389,14 @@ public partial class WordHandler
         var instrBuilder = new StringBuilder($" TOC \\o \"{levels}\"");
         if (hyperlinks) instrBuilder.Append(" \\h");
         if (!pageNumbers) instrBuilder.Append(" \\z");
+        // BUG-R5-03: \t = custom-style→level mapping (Word's "Style; level"
+        // syntax, e.g. "MyHeading,1,MySub,2"); \b = bookmark scope (single
+        // bookmark name). Both round-trip through dump→add and were
+        // silently dropped before, breaking custom TOC layouts.
+        if (properties.TryGetValue("customStyles", out var cs) && !string.IsNullOrEmpty(cs))
+            instrBuilder.Append($" \\t \"{cs}\"");
+        if (properties.TryGetValue("bookmark", out var bm) && !string.IsNullOrEmpty(bm))
+            instrBuilder.Append($" \\b \"{bm}\"");
         instrBuilder.Append(" \\u ");
 
         var tocPara = new Paragraph();
@@ -456,10 +464,19 @@ public partial class WordHandler
                    ?? properties.GetValueOrDefault("styleName")
                    ?? properties.GetValueOrDefault("stylename")
                    ?? "CustomStyle";
+        // BUG-R7-08: when the caller passes only `id` (no name), AddStyle used
+        // to default the name to the id. That mutated the round-trip output
+        // for any docx whose original style had an `id` but no `<w:name>`
+        // (or empty name) — the next dump showed `name=<id>`. Preserve the
+        // "no explicit name" intent by emitting an empty <w:name w:val=""/>
+        // (still schema-valid; matches the original).
+        var explicitName = properties.ContainsKey("name")
+            || properties.ContainsKey("styleName")
+            || properties.ContainsKey("stylename");
         var styleName = properties.GetValueOrDefault("name")
                      ?? properties.GetValueOrDefault("styleName")
                      ?? properties.GetValueOrDefault("stylename")
-                     ?? styleId;
+                     ?? (explicitName ? styleId : "");
         var styleType = properties.GetValueOrDefault("type", "paragraph").ToLowerInvariant() switch
         {
             "character" or "char" => StyleValues.Character,
@@ -474,14 +491,43 @@ public partial class WordHandler
         // to keep the call idempotent-ish for scripts that only pass --prop name.
         bool IdTaken(string candidate) => stylesPart.Styles.Elements<Style>()
             .Any(s => string.Equals(s.StyleId?.Value, candidate, StringComparison.Ordinal));
+        // BUG-R6-03: dump→batch on a fresh blank docx fails 42×
+        // ("Style Normal already exists") because real documents always
+        // carry built-in style definitions (Normal, Heading1-9, Title,
+        // ListParagraph, …) and the blank template ships with the same
+        // ids reserved. For built-in ids the safe semantics is upsert:
+        // remove the existing definition and let the rest of AddStyle
+        // re-create it with the caller's full property bag. Mirrors
+        // BlankDocCreator's hands-off treatment of built-ins (it only
+        // registers the bare style scaffolding).
+        var builtInIdsForUpsert = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Normal", "Heading1", "Heading2", "Heading3", "Heading4", "Heading5",
+            "Heading6", "Heading7", "Heading8", "Heading9", "Title", "Subtitle",
+            "Quote", "IntenseQuote", "ListParagraph", "NoSpacing", "TOCHeading",
+            "DefaultParagraphFont", "TableNormal", "NoList",
+        };
         if (IdTaken(styleId))
         {
-            if (explicitId)
+            if (builtInIdsForUpsert.Contains(styleId))
+            {
+                // Idempotent re-add: drop the existing definition. We
+                // preserve the explicitId path's strictness for non-
+                // built-in ids so users authoring custom styles still
+                // see a clear "duplicate id" error.
+                var existing = stylesPart.Styles.Elements<Style>()
+                    .FirstOrDefault(s => string.Equals(s.StyleId?.Value, styleId, StringComparison.Ordinal));
+                existing?.Remove();
+            }
+            else if (explicitId)
                 throw new ArgumentException(
                     $"Style '{styleId}' already exists. Pick a unique --prop id or --prop name.");
-            var baseId = styleId;
-            int suffix = 2;
-            while (IdTaken(styleId)) styleId = $"{baseId}{suffix++}";
+            else
+            {
+                var baseId = styleId;
+                int suffix = 2;
+                while (IdTaken(styleId)) styleId = $"{baseId}{suffix++}";
+            }
         }
 
         // OOXML requires w:name to be unique across styles.xml, same as w:styleId.
@@ -490,19 +536,20 @@ public partial class WordHandler
         // that users could not tell apart (BUG-R17-02).
         bool NameTaken(string candidate) => stylesPart.Styles.Elements<Style>()
             .Any(s => string.Equals(s.StyleName?.Val?.Value, candidate, StringComparison.Ordinal));
-        if (NameTaken(styleName))
+        // BUG-R7-08: empty styleName (id-only style, see styleName fallback
+        // above) is allowed to repeat — multiple unnamed styles round-trip
+        // from real docx files where the author left out the display name.
+        if (!string.IsNullOrEmpty(styleName) && NameTaken(styleName))
             throw new ArgumentException(
                 $"Style with name '{styleName}' already exists. Pick a unique --prop name.");
 
         // Built-in styles must not have customStyle=true, or Word won't recognize them
-        // (e.g. TOC won't find Heading1 if it's marked as custom)
-        var builtInIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "Normal", "Heading1", "Heading2", "Heading3", "Heading4", "Heading5",
-            "Heading6", "Heading7", "Heading8", "Heading9", "Title", "Subtitle",
-            "Quote", "IntenseQuote", "ListParagraph", "NoSpacing", "TOCHeading"
-        };
-        var isBuiltIn = builtInIds.Contains(styleId);
+        // (e.g. TOC won't find Heading1 if it's marked as custom).
+        // BUG-023 — single source of truth: reuse the upsert set above so that
+        // DefaultParagraphFont / TableNormal / NoList (idempotent re-adds on
+        // dump→batch) don't get stamped customStyle=true and break Word's
+        // run-style fallback chain.
+        var isBuiltIn = builtInIdsForUpsert.Contains(styleId);
 
         var newStyle = new Style
         {
@@ -536,6 +583,29 @@ public partial class WordHandler
         {
             var sp = stylePPr.SpacingBetweenLines ?? (stylePPr.SpacingBetweenLines = new SpacingBetweenLines());
             sp.After = SpacingConverter.ParseWordSpacing(sSAfter).ToString();
+            hasPPr = true;
+        }
+        // CONSISTENCY(add-set-symmetry): mirror SetStylePath's lineSpacing case
+        // (WordHandler.Set.Dispatch.cs:1403). Without this, `add /styles … --prop
+        // lineSpacing=1.5x` was silent-dropped while `set /styles/X --prop
+        // lineSpacing=1.5x` worked, breaking dump → batch round-trip on style
+        // entries (BUG-R2-08 / BT-8).
+        if (properties.TryGetValue("linespacing", out var sLineSpacing) || properties.TryGetValue("lineSpacing", out sLineSpacing))
+        {
+            var sp = stylePPr.SpacingBetweenLines ?? (stylePPr.SpacingBetweenLines = new SpacingBetweenLines());
+            var (twips, isMultiplier) = SpacingConverter.ParseWordLineSpacing(sLineSpacing);
+            sp.Line = twips.ToString();
+            sp.LineRule = isMultiplier
+                ? new DocumentFormat.OpenXml.EnumValue<LineSpacingRuleValues>(LineSpacingRuleValues.Auto)
+                : new DocumentFormat.OpenXml.EnumValue<LineSpacingRuleValues>(LineSpacingRuleValues.Exact);
+            hasPPr = true;
+        }
+        // BUG-019: explicit lineRule override (auto/exact/atLeast) — needed
+        // because lineSpacing alone serializes AtLeast and Exact identically.
+        if (properties.TryGetValue("lineRule", out var sLineRule) || properties.TryGetValue("linerule", out sLineRule))
+        {
+            var sp = stylePPr.SpacingBetweenLines ?? (stylePPr.SpacingBetweenLines = new SpacingBetweenLines());
+            sp.LineRule = ParseLineRule(sLineRule);
             hasPPr = true;
         }
         // Reading direction: <w:bidi/> on style pPr (mirrors AddParagraph).
@@ -711,7 +781,8 @@ public partial class WordHandler
             "name", "styleName", "stylename",
             "type", "basedon", "basedOn", "next",
             "align", "alignment", "spacebefore", "spaceBefore",
-            "spaceafter", "spaceAfter", "font", "size", "bold", "italic", "color",
+            "spaceafter", "spaceAfter", "linespacing", "lineSpacing",
+            "font", "size", "bold", "italic", "color",
             "direction", "dir", "bidi",
             "font.ascii", "font.hAnsi", "font.eastAsia", "font.cs",
             "numId", "numid", "ilvl", "numLevel", "numlevel",
@@ -775,6 +846,48 @@ public partial class WordHandler
                     key, value);
                 continue;
             }
+            // CONSISTENCY(style-indent): list-family styles round-trip with
+            // leftIndent / hangingIndent / firstLineIndent / rightIndent on the
+            // style definition (BUG BT-5). Mirror SetStylePath's wiring so
+            // dump→batch survives without losing list indents.
+            switch (key.ToLowerInvariant())
+            {
+                case "leftindent":
+                {
+                    var pPrLi = newStyle.StyleParagraphProperties ?? EnsureStyleParagraphProperties(newStyle);
+                    var indLi = pPrLi.Indentation ?? (pPrLi.Indentation = new Indentation());
+                    indLi.Left = SpacingConverter.ParseWordSpacing(value).ToString();
+                    continue;
+                }
+                case "rightindent":
+                {
+                    var pPrRi = newStyle.StyleParagraphProperties ?? EnsureStyleParagraphProperties(newStyle);
+                    var indRi = pPrRi.Indentation ?? (pPrRi.Indentation = new Indentation());
+                    indRi.Right = SpacingConverter.ParseWordSpacing(value).ToString();
+                    continue;
+                }
+                case "firstlineindent":
+                {
+                    var pPrFli = newStyle.StyleParagraphProperties ?? EnsureStyleParagraphProperties(newStyle);
+                    var indFli = pPrFli.Indentation ?? (pPrFli.Indentation = new Indentation());
+                    indFli.FirstLine = SpacingConverter.ParseWordSpacing(value).ToString();
+                    continue;
+                }
+                case "hangingindent":
+                {
+                    var pPrHi = newStyle.StyleParagraphProperties ?? EnsureStyleParagraphProperties(newStyle);
+                    var indHi = pPrHi.Indentation ?? (pPrHi.Indentation = new Indentation());
+                    indHi.Hanging = SpacingConverter.ParseWordSpacing(value).ToString();
+                    continue;
+                }
+                case "pbdr.top" or "pbdr.bottom" or "pbdr.left" or "pbdr.right" or "pbdr.between" or "pbdr.bar" or "pbdr.all" or "pbdr":
+                {
+                    var pPrB = newStyle.StyleParagraphProperties ?? EnsureStyleParagraphProperties(newStyle);
+                    ApplyStyleParagraphBorders(pPrB, key, value);
+                    continue;
+                }
+            }
+
             // Anything still unconsumed is a genuine silent drop — composites
             // (font.eastAsia, ind.firstLine, tabs, numId, ...) that the
             // curated AddStyle does not yet model. Record so the CLI layer
@@ -1274,6 +1387,50 @@ public partial class WordHandler
             }
             level.AppendChild(pPr);
         }
+
+        // BUG-R5-T2: AddLvl previously dropped font/size/color/bold/italic/
+        // underline silently — they're documented for SetAbstractNumPath
+        // level-scope but Add never consumed them. Mirror the Set branch
+        // (NumberingSymbolRunProperties is the lvl-level rPr container).
+        NumberingSymbolRunProperties? rPr = null;
+        NumberingSymbolRunProperties EnsureRPr() => rPr ??= new NumberingSymbolRunProperties();
+        if (properties.TryGetValue("font", out var lvlFontRaw) && !string.IsNullOrEmpty(lvlFontRaw))
+        {
+            var rp = EnsureRPr();
+            var rf = rp.GetFirstChild<RunFonts>() ?? rp.AppendChild(new RunFonts());
+            rf.Ascii = lvlFontRaw;
+            rf.HighAnsi = lvlFontRaw;
+            rf.EastAsia = lvlFontRaw;
+        }
+        if (properties.TryGetValue("size", out var lvlSizeRaw) && !string.IsNullOrEmpty(lvlSizeRaw))
+        {
+            var rp = EnsureRPr();
+            var halfPt = (int)Math.Round(ParseFontSize(lvlSizeRaw) * 2, MidpointRounding.AwayFromZero);
+            rp.AppendChild(new FontSize { Val = halfPt.ToString() });
+        }
+        if (properties.TryGetValue("color", out var lvlColorRaw) && !string.IsNullOrEmpty(lvlColorRaw))
+        {
+            var rp = EnsureRPr();
+            rp.AppendChild(new Color { Val = SanitizeHex(lvlColorRaw) });
+        }
+        if (properties.TryGetValue("bold", out var lvlBoldRaw) && IsTruthy(lvlBoldRaw))
+        {
+            EnsureRPr().AppendChild(new Bold());
+        }
+        if (properties.TryGetValue("italic", out var lvlItalRaw) && IsTruthy(lvlItalRaw))
+        {
+            EnsureRPr().AppendChild(new Italic());
+        }
+        if (properties.TryGetValue("underline", out var lvlUnderRaw) && !string.IsNullOrEmpty(lvlUnderRaw))
+        {
+            var u = new Underline();
+            if (IsTruthy(lvlUnderRaw)) u.Val = UnderlineValues.Single;
+            else if (string.Equals(lvlUnderRaw, "double", StringComparison.OrdinalIgnoreCase)) u.Val = UnderlineValues.Double;
+            else if (string.Equals(lvlUnderRaw, "none", StringComparison.OrdinalIgnoreCase) || string.Equals(lvlUnderRaw, "false", StringComparison.OrdinalIgnoreCase)) u.Val = UnderlineValues.None;
+            else u.Val = UnderlineValues.Single;
+            EnsureRPr().AppendChild(u);
+        }
+        if (rPr != null) level.AppendChild(rPr);
 
         // CRITICAL: AppendChild — NOT AddChild. Schema-aware AddChild treats
         // <w:lvl> as a single-instance child slot (the SDK's metadata says

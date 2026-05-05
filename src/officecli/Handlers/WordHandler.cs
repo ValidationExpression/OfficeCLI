@@ -176,11 +176,35 @@ public partial class WordHandler : IDocumentHandler
         else if (lowerPath is "/settings")
             rootElement = mainPart.DocumentSettingsPart?.Settings ?? throw new InvalidOperationException("No settings part");
         else if (lowerPath is "/numbering")
-            rootElement = mainPart.NumberingDefinitionsPart?.Numbering ?? throw new InvalidOperationException("No numbering part");
+        {
+            // CONSISTENCY(raw-set-create-missing-part): see /theme branch.
+            var numPart = mainPart.NumberingDefinitionsPart ?? mainPart.AddNewPart<NumberingDefinitionsPart>();
+            if (numPart.Numbering == null)
+            {
+                numPart.Numbering = new Numbering();
+                numPart.Numbering.Save();
+            }
+            rootElement = numPart.Numbering;
+        }
         else if (lowerPath is "/comments")
             rootElement = mainPart.WordprocessingCommentsPart?.Comments ?? throw new InvalidOperationException("No comments part");
         else if (lowerPath is "/theme")
-            rootElement = mainPart.ThemePart?.Theme ?? throw new InvalidOperationException("No theme part");
+        {
+            // CONSISTENCY(raw-set-create-missing-part): blank docs created via
+            // BlankDocCreator have no ThemePart; dump→batch round-trip from a
+            // real Word/python-docx file emits raw-set /theme replace which
+            // would otherwise abort the whole batch. Lazily add the theme part
+            // and an empty <a:theme> root so RawXmlHelper.Execute can match
+            // /a:theme and replace it with the dumped XML.
+            var themePart = mainPart.ThemePart ?? mainPart.AddNewPart<ThemePart>();
+            if (themePart.Theme == null)
+            {
+                themePart.Theme = new DocumentFormat.OpenXml.Drawing.Theme(
+                    new DocumentFormat.OpenXml.Drawing.ThemeElements());
+                themePart.Theme.Save();
+            }
+            rootElement = themePart.Theme;
+        }
         else if (lowerPath.StartsWith("/header"))
         {
             var idx = 0;
@@ -224,7 +248,11 @@ public partial class WordHandler : IDocumentHandler
         // across the same _usedParaIds set. Re-run EnsureAllParaIds after
         // every successful raw mutation so the global pool stays accurate.
         EnsureAllParaIds();
-        Console.WriteLine($"raw-set: {affected} element(s) affected");
+        // BUG-R5-01: do not emit chatter from inside the handler — the CLI
+        // wrappers (CommandBuilder.Raw raw-set + batch run raw-set) print
+        // their own structured message. Writing here pollutes batch --json
+        // output (extra stdout lines escaped into result.message strings).
+        _ = affected;
     }
 
     public List<ValidationError> Validate() => RawXmlHelper.ValidateDocument(_doc);
