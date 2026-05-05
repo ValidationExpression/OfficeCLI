@@ -804,6 +804,18 @@ public static class BatchEmitter
 
         // Multi-run paragraph: emit/set the paragraph empty first, then add
         // each run as an explicit child.
+        //
+        // BUG-DUMP-HOIST: WordHandler surfaces the first run's RunProperties on
+        // the paragraph node's Format (Navigation.cs ~1352, mirrors PPTX's
+        // shape-level first-run hoist). For *single-run* paragraphs this is
+        // load-bearing — `collapseSingleRun` above relies on it to fold the
+        // run into `add p`. For *multi-run* paragraphs it is wrong: the
+        // firstRun's bold/color/size/font/etc. would ride on `add p`, which
+        // re-applies them to pPr/rPr on replay and causes every plain sibling
+        // run to inherit the first run's formatting. Strip run-level character
+        // keys from the paragraph prop bag here — each run gets its own
+        // `add r` below carrying its real props.
+        StripRunCharacterPropsFromParagraph(props);
         if (autoPresent)
         {
             if (props.Count > 0)
@@ -1524,6 +1536,25 @@ public static class BatchEmitter
         // through dump for AtLeast spacing to round-trip without silent
         // downgrade to Exact (which clips tall glyphs).
     };
+
+    // BUG-DUMP-HOIST: run-level character properties that WordHandler.Navigation
+    // surfaces on the paragraph node (via the firstRun fallback) but which must
+    // NOT ride on `add p` for multi-run paragraphs — every individual run gets
+    // its own `add r` carrying its real props.
+    private static readonly HashSet<string> RunCharacterPropsHoistedFromFirstRun = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bold", "italic", "size", "color", "underline", "underline.color",
+        "strike", "highlight",
+        "font.latin", "font.ea", "font.ascii", "font.hAnsi",
+        // complex-script siblings populated by ReadComplexScriptRunFormatting
+        "bold.cs", "italic.cs", "size.cs", "font.cs",
+    };
+
+    private static void StripRunCharacterPropsFromParagraph(Dictionary<string, string> props)
+    {
+        foreach (var k in RunCharacterPropsHoistedFromFirstRun)
+            props.Remove(k);
+    }
 
     private static Dictionary<string, string> FilterEmittableProps(Dictionary<string, object?> raw)
     {
