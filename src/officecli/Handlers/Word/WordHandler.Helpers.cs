@@ -615,6 +615,25 @@ public partial class WordHandler
                 // readback and dump round-trip — the inner Run was reachable
                 // via Descendants<Run>() but appeared empty.
                 case DeletedText dt: sb.Append(dt.Text); break;
+                // BUG-DUMP5-03: inline character elements that carry no <w:t>
+                // child but contribute visible glyphs. Map to their Unicode
+                // equivalents so dump→batch round-trip preserves the visible
+                // text. Without this, every <w:noBreakHyphen/> / <w:softHyphen/>
+                // dropped to an empty run and disappeared on replay.
+                case NoBreakHyphen: sb.Append('‑'); break; // non-breaking hyphen
+                case SoftHyphen: sb.Append('­'); break;   // soft hyphen
+                // BUG-DUMP5-04: date / time placeholder elements (dayLong /
+                // monthLong / yearShort / dayShort / monthShort / yearLong)
+                // are auto-substituted by Word at render time. They carry no
+                // text in OOXML — surface a stable placeholder so dump
+                // captures their presence (otherwise the runs vanish on
+                // round-trip and Word has nothing to substitute against).
+                case DayLong: sb.Append("[dayLong]"); break;
+                case DayShort: sb.Append("[dayShort]"); break;
+                case MonthLong: sb.Append("[monthLong]"); break;
+                case MonthShort: sb.Append("[monthShort]"); break;
+                case YearLong: sb.Append("[yearLong]"); break;
+                case YearShort: sb.Append("[yearShort]"); break;
             }
         }
         return sb.ToString();
