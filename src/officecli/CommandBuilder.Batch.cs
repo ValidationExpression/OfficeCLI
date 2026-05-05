@@ -45,6 +45,28 @@ static partial class CommandBuilder
             var forceFlag = result.GetValue(batchForceOpt);
 
             string jsonText;
+            // BUG-R7-09 (F-6): previously --commands/--input/stdin were
+            // silently prioritized in that order — passing two of them at
+            // once dropped the lower-priority source with no warning, so
+            // scripts could fail subtly when an agent piped data into a
+            // command that already had --commands set. Reject the
+            // combination loudly. (Detect stdin via Console.IsInputRedirected
+            // to avoid spurious failures from interactive terminals.)
+            bool stdinHasInput = Console.IsInputRedirected;
+            int sourceCount = (inlineCommands != null ? 1 : 0)
+                            + (inputFile != null ? 1 : 0)
+                            + ((inlineCommands == null && inputFile == null && stdinHasInput) ? 1 : 0);
+            if (inlineCommands != null && inputFile != null)
+                throw new ArgumentException(
+                    "batch: --commands and --input are mutually exclusive. Pick one source.");
+            if ((inlineCommands != null || inputFile != null) && stdinHasInput
+                && Environment.GetEnvironmentVariable("OFFICECLI_BATCH_ALLOW_STDIN_REDIRECT") == null)
+            {
+                Console.Error.WriteLine(
+                    "Warning: batch is reading from --commands/--input but stdin is also redirected; "
+                    + "stdin will be ignored. Pass only one source to silence this warning, or set "
+                    + "OFFICECLI_BATCH_ALLOW_STDIN_REDIRECT=1.");
+            }
             if (inlineCommands != null)
             {
                 jsonText = inlineCommands;
@@ -65,6 +87,19 @@ static partial class CommandBuilder
 
             // Pre-validate: check for unknown JSON fields before deserializing
             using var jsonDoc = System.Text.Json.JsonDocument.Parse(jsonText);
+            // BUG-R7-10: when the batch input is a JSON object/string/etc.
+            // (not an array), Deserialize<List<BatchItem>> threw a generic
+            // JsonException whose message exposed the C# generic type name
+            // (`System.Collections.Generic.List`1[OfficeCli.BatchItem]`).
+            // Convert it to a human-friendly error first so AI agents and
+            // humans see a stable, model-agnostic diagnostic.
+            if (jsonDoc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array
+                && jsonDoc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Null)
+            {
+                throw new ArgumentException(
+                    $"Batch input must be a JSON array. Got: {jsonDoc.RootElement.ValueKind.ToString().ToLowerInvariant()}. "
+                    + "Wrap a single item like [{\"command\":\"get\",\"path\":\"/\"}].");
+            }
             if (jsonDoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
             {
                 int ri = 0;
@@ -108,7 +143,22 @@ static partial class CommandBuilder
                 if (!file.Exists)
                     throw new CliException($"File not found: {file.FullName}")
                         { Code = "file_not_found" };
-                PrintBatchResults(new List<BatchResult>(), json, 0);
+                // BUG-R7-09: in --json mode an empty/null batch input
+                // previously skipped the {"success":...,"data":{...}}
+                // envelope used by the populated-array path, so AI agents
+                // saw a missing `success` key. Apply the same envelope
+                // wrap here for shape parity.
+                if (json)
+                {
+                    using var sw = new System.IO.StringWriter();
+                    PrintBatchResults(new List<BatchResult>(), json, 0, sw);
+                    var inner = sw.ToString().TrimEnd('\n', '\r');
+                    Console.WriteLine(OfficeCli.Core.OutputFormatter.WrapEnvelope(inner));
+                }
+                else
+                {
+                    PrintBatchResults(new List<BatchResult>(), json, 0);
+                }
                 return 0;
             }
 
