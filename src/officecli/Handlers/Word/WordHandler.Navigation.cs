@@ -1573,8 +1573,14 @@ public partial class WordHandler
                 // was silently dropped. Block-level oMathPara is already
                 // handled at the body level via the LocalName=="oMathPara"
                 // branch below.
+                // BUG-DUMP8-03: include m:oMath nested inside w:ins/w:del
+                // change-track wrappers — they are paragraph grandchildren,
+                // not direct children, and were silently dropped on dump.
                 int inlineEqIdx = 0;
-                foreach (var inlineEq in para.Elements<M.OfficeMath>())
+                var inlineEqs = para.Elements<M.OfficeMath>()
+                    .Concat(para.Elements<InsertedRun>().SelectMany(ins => ins.Elements<M.OfficeMath>()))
+                    .Concat(para.Elements<DeletedRun>().SelectMany(del => del.Elements<M.OfficeMath>()));
+                foreach (var inlineEq in inlineEqs)
                 {
                     node.Children.Add(ElementToNode(inlineEq, $"{path}/equation[{inlineEqIdx + 1}]", depth - 1));
                     inlineEqIdx++;
