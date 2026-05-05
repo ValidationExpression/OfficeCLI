@@ -6,6 +6,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using A = DocumentFormat.OpenXml.Drawing;
 using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using OfficeCli.Core;
 
 namespace OfficeCli.Handlers;
 
@@ -350,8 +351,18 @@ public partial class WordHandler
             && !string.IsNullOrEmpty(implicitWrap)
             && !string.Equals(implicitWrap, "none", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(implicitWrap, "inline", StringComparison.OrdinalIgnoreCase);
-        if ((properties.TryGetValue("anchor", out var anchorVal) && IsTruthy(anchorVal))
-            || wrapImpliesAnchor)
+        // BUG-DUMP11-06: `anchor` is overloaded — historically a bool flag for
+        // floating placement, but Get also surfaces the hyperlink anchor name
+        // when the picture's run is wrapped in <w:hyperlink w:anchor="...">.
+        // Treat bool-recognized values (true/false/yes/no/0/1/on/off) as the
+        // floating switch; treat any other non-empty string as a hyperlink
+        // bookmark name attached to the picture's drawing.
+        bool hasAnchorProp = properties.TryGetValue("anchor", out var anchorVal)
+            && !string.IsNullOrEmpty(anchorVal);
+        bool anchorIsBool = hasAnchorProp && ParseHelpers.IsValidBooleanString(anchorVal);
+        bool anchorIsFloating = hasAnchorProp && anchorIsBool && IsTruthy(anchorVal);
+        string? hyperlinkAnchorName = hasAnchorProp && !anchorIsBool ? anchorVal : null;
+        if (anchorIsFloating || wrapImpliesAnchor)
         {
             var wrapType = properties.GetValueOrDefault("wrap", "none");
             long hPos = properties.TryGetValue("hposition", out var hPosStr) ? ParseEmu(hPosStr) : 0;
@@ -464,6 +475,36 @@ public partial class WordHandler
                 resultPath = $"{parentPath}/{BuildParaPathSegment(imgPara, imgPIdx)}";
             }
         }
+
+        // BUG-DUMP11-06: a hyperlink-wrapped picture's `anchor` attr (the
+        // Word-level <w:hyperlink w:anchor="bookmark"> wrapping) round-trips
+        // by re-wrapping the inserted Run in a fresh Hyperlink. Navigation's
+        // run-parent-is-hyperlink branch already surfaces the anchor on the
+        // picture node. Pass-through the optional metadata attrs (tooltip /
+        // tgtFrame / history / url) for symmetry with AddHyperlink.
+        if (hyperlinkAnchorName != null)
+        {
+            var hlWrap = new Hyperlink { Anchor = hyperlinkAnchorName };
+            if (properties.TryGetValue("tooltip", out var picTip)) hlWrap.Tooltip = picTip;
+            if ((properties.TryGetValue("tgtFrame", out var picTgt)
+                 || properties.TryGetValue("tgtframe", out picTgt))
+                && !string.IsNullOrEmpty(picTgt))
+                hlWrap.TargetFrame = picTgt;
+            if (properties.TryGetValue("history", out var picHist) && IsTruthy(picHist))
+                hlWrap.History = OnOffValue.FromBoolean(true);
+
+            var imgRunParent = imgRun.Parent;
+            if (imgRunParent != null)
+            {
+                // Replace the run in-place with a Hyperlink wrapper so
+                // sibling order and the resultPath (which addresses the run
+                // via Descendants<Run>()) remain valid.
+                imgRun.InsertAfterSelf(hlWrap);
+                imgRun.Remove();
+                hlWrap.AppendChild(imgRun);
+            }
+        }
+
         return resultPath;
     }
 
