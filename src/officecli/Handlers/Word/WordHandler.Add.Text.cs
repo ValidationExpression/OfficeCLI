@@ -226,8 +226,10 @@ public partial class WordHandler
             || properties.TryGetValue("listid", out numId))
         {
             var numIdVal = ParseHelpers.SafeParseInt(numId, "numid");
-            if (numIdVal < 0)
-                throw new ArgumentException($"numId must be >= 0 (got {numIdVal}).");
+            // numId=-1 is the OOXML negation marker (override inherited numbering
+            // back to "no list"); treat it like 0 (skip existence check).
+            if (numIdVal < -1)
+                throw new ArgumentException($"numId must be >= -1 (got {numIdVal}).");
             // numId=0 is OOXML's way of saying "remove numbering" (no-list sentinel).
             // Positive numIds must reference an existing <w:num> to avoid silent dangling
             // references — Word renders such paragraphs without any list marker.

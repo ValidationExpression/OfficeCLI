@@ -696,8 +696,10 @@ public partial class WordHandler
             case "numId" or "numid":
                 var numPr = pProps.NumberingProperties ?? (pProps.NumberingProperties = new NumberingProperties());
                 var numIdVal = ParseHelpers.SafeParseInt(value, "numId");
-                if (numIdVal < 0)
-                    throw new ArgumentException($"numId must be >= 0 (got {numIdVal}). Use numId=0 to remove numbering.");
+                // numId=-1 is the OOXML negation marker that overrides inherited
+                // numbering back to "no list"; treat it like 0 (skip existence check).
+                if (numIdVal < -1)
+                    throw new ArgumentException($"numId must be >= -1 (got {numIdVal}). Use numId=0 or numId=-1 to remove numbering.");
                 if (numIdVal > 0)
                 {
                     var numbering = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
