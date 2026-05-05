@@ -855,7 +855,12 @@ public static class BatchEmitter
              // path so the keys ride along on `add r`.
              || runs[0].Format.ContainsKey("ligatures")
              || runs[0].Format.ContainsKey("numForm")
-             || runs[0].Format.ContainsKey("numSpacing"));
+             || runs[0].Format.ContainsKey("numSpacing")
+             // BUG-DUMP5-10: trackChange wraps the run in <w:ins>/<w:del>;
+             // AddRun consumes it and rebuilds the wrapper, but
+             // AddParagraph has no equivalent path. Collapsing onto the
+             // paragraph would silently drop the attribution.
+             || runs[0].Format.ContainsKey("trackChange"));
         bool singleRunIsNoteRef = runs.Count == 1 &&
             runs[0].Format.TryGetValue("rStyle", out var srStyle)
             && (string.Equals(srStyle?.ToString(), "FootnoteReference", StringComparison.OrdinalIgnoreCase)

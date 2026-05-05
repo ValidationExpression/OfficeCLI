@@ -1041,6 +1041,27 @@ public partial class WordHandler
         if (parent is not Paragraph targetPara)
             throw new ArgumentException("Runs can only be added to paragraphs");
 
+        // BUG-DUMP5-10: track-change attribution from dump round-trip.
+        // BatchEmitter (round-4 fix) emits trackChange / trackChange.author /
+        // trackChange.date on the run when the source run sat inside a
+        // <w:ins>/<w:del> wrapper. Without consuming these here, the dotted
+        // fallback below dispatches them through TypedAttributeFallback.TrySet
+        // — which has no rPr attribute to bind them to — and they're marked
+        // UNSUPPORTED, dropping the wrapper entirely on replay.
+        string? trackChangeKind = null;
+        string? trackChangeAuthor = null;
+        string? trackChangeDate = null;
+        string? trackChangeId = null;
+        if (properties.TryGetValue("trackChange", out var tcKindRaw)
+            || properties.TryGetValue("trackchange", out tcKindRaw))
+            trackChangeKind = tcKindRaw?.Trim().ToLowerInvariant();
+        properties.TryGetValue("trackChange.author", out trackChangeAuthor);
+        if (trackChangeAuthor == null) properties.TryGetValue("trackchange.author", out trackChangeAuthor);
+        properties.TryGetValue("trackChange.date", out trackChangeDate);
+        if (trackChangeDate == null) properties.TryGetValue("trackchange.date", out trackChangeDate);
+        properties.TryGetValue("trackChange.id", out trackChangeId);
+        if (trackChangeId == null) properties.TryGetValue("trackchange.id", out trackChangeId);
+
         var newRun = new Run();
         var newRProps = new RunProperties();
         // Per-script font slots (font.latin/ea/cs) compose with bare 'font'.
@@ -1320,6 +1341,9 @@ public partial class WordHandler
             "rstyle", "rStyle",
             "textoutline", "textfill", "w14shadow", "w14glow", "w14reflection",
             "field", "formula", "ref", "id",
+            // BUG-DUMP5-10: consumed up-front for the w:ins/w:del wrapper
+            // emit at the bottom of this method.
+            "trackchange",
         };
         foreach (var (key, value) in properties)
         {
@@ -1368,6 +1392,11 @@ public partial class WordHandler
                 case "boldcs":
                 case "italiccs":
                 case "sizecs":
+                // BUG-DUMP5-10: consumed up-front for the w:ins/w:del
+                // wrapper emit at the bottom of this method.
+                case "trackchange.author":
+                case "trackchange.date":
+                case "trackchange.id":
                     continue;
             }
             // CONSISTENCY(add-set-symmetry / bcp47-validation): route lang.*
@@ -1421,6 +1450,60 @@ public partial class WordHandler
             targetPara.AppendChild(newRun);
             var runCount = GetAllRuns(targetPara).IndexOf(newRun) + 1;
             resultPath = $"{ReplaceTrailingParaSegment(parentPath, targetPara)}/r[{runCount}]";
+        }
+
+        // BUG-DUMP5-10: wrap in w:ins / w:del when the dump asked for
+        // track-change attribution. Replace newRun in its parent with the
+        // wrapper containing newRun so author/date attribution survives the
+        // dump→batch round-trip. The path computed above remains valid:
+        // GetAllRuns walks Descendants<Run>() which descends into the
+        // wrapper, so the run keeps its r[N] index.
+        if (trackChangeKind == "ins" || trackChangeKind == "del")
+        {
+            var parentEl = newRun.Parent;
+            if (parentEl != null)
+            {
+                OpenXmlElement wrapper = trackChangeKind == "ins"
+                    ? new InsertedRun()
+                    : new DeletedRun();
+                if (!string.IsNullOrEmpty(trackChangeAuthor))
+                {
+                    if (wrapper is InsertedRun insW) insW.Author = trackChangeAuthor;
+                    else if (wrapper is DeletedRun delW) delW.Author = trackChangeAuthor;
+                }
+                if (!string.IsNullOrEmpty(trackChangeDate)
+                    && DateTime.TryParse(trackChangeDate, out var tcDate))
+                {
+                    if (wrapper is InsertedRun insW2) insW2.Date = tcDate;
+                    else if (wrapper is DeletedRun delW2) delW2.Date = tcDate;
+                }
+                if (!string.IsNullOrEmpty(trackChangeId))
+                {
+                    if (wrapper is InsertedRun insW3) insW3.Id = trackChangeId;
+                    else if (wrapper is DeletedRun delW3) delW3.Id = trackChangeId;
+                }
+                else
+                {
+                    // Each ins/del needs a unique w:id. Reuse the paraId
+                    // counter to avoid colliding with anything Word writes.
+                    var fallbackId = (GenerateParaId().GetHashCode() & 0x7FFFFFFF).ToString();
+                    if (wrapper is InsertedRun insW4) insW4.Id = fallbackId;
+                    else if (wrapper is DeletedRun delW4) delW4.Id = fallbackId;
+                }
+                // For w:del, the inner Run's <w:t> must become <w:delText>
+                // so Word displays the strikethrough content. Convert
+                // any Text children to DeletedText.
+                if (trackChangeKind == "del")
+                {
+                    foreach (var t in newRun.Elements<Text>().ToList())
+                    {
+                        var dt = new DeletedText(t.Text ?? "") { Space = t.Space };
+                        t.Parent?.ReplaceChild(dt, t);
+                    }
+                }
+                parentEl.ReplaceChild(wrapper, newRun);
+                wrapper.AppendChild(newRun);
+            }
         }
 
         // Refresh textId since paragraph content changed
