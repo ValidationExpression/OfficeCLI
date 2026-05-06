@@ -480,11 +480,38 @@ public partial class PowerPointHandler
                     outline.AppendChild(new Drawing.TailEnd { Type = ParseLineEndType(value) });
                     break;
                 }
+                case "from" or "startshape":
+                case "to" or "endshape":
+                {
+                    // CONSISTENCY(connector-endpoints): mirror Add.Misc.cs's
+                    // from/to wiring. Schema declares set:true for from/to;
+                    // previously the Set path had no case so updates were
+                    // rejected as unsupported_property. Replace any existing
+                    // StartConnection/EndConnection rather than append (XML
+                    // schema allows only one of each on a connector).
+                    var endpointId = ResolveShapeId(value, shapeTree);
+                    var cxnDrawProps = cxn.NonVisualConnectionShapeProperties
+                        ?.GetFirstChild<NonVisualConnectorShapeDrawingProperties>();
+                    if (cxnDrawProps == null) { unsupported.Add(key); break; }
+                    bool isStart = key.Equals("from", StringComparison.OrdinalIgnoreCase)
+                        || key.Equals("startshape", StringComparison.OrdinalIgnoreCase);
+                    if (isStart)
+                    {
+                        cxnDrawProps.RemoveAllChildren<Drawing.StartConnection>();
+                        cxnDrawProps.AppendChild(new Drawing.StartConnection { Id = endpointId, Index = 0 });
+                    }
+                    else
+                    {
+                        cxnDrawProps.RemoveAllChildren<Drawing.EndConnection>();
+                        cxnDrawProps.AppendChild(new Drawing.EndConnection { Id = endpointId, Index = 0 });
+                    }
+                    break;
+                }
                 default:
                     if (!GenericXmlQuery.SetGenericAttribute(cxn, key, value))
                     {
                         if (unsupported.Count == 0)
-                            unsupported.Add($"{key} (valid connector props: line, color, fill, x, y, width, height, rotation, name, headEnd, tailEnd, geometry)");
+                            unsupported.Add($"{key} (valid connector props: line, color, fill, x, y, width, height, rotation, name, headEnd, tailEnd, geometry, from, to)");
                         else
                             unsupported.Add(key);
                     }
