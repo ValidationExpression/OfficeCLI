@@ -21,7 +21,7 @@ internal static class WordHtmlRefresh
             using (var doc = WordprocessingDocument.Open(docx, isEditable: true))
             {
                 WordTocBuilder.RegenerateAllTocs(doc);
-                doc.MainDocumentPart!.Document.Save();
+                doc.MainDocumentPart!.Document!.Save();
             }
 
             using (var handler = (Handlers.WordHandler)Handlers.DocumentHandlerFactory.Open(docx, editable: false))
@@ -41,7 +41,7 @@ internal static class WordHtmlRefresh
             using (var doc = WordprocessingDocument.Open(docx, isEditable: true))
             {
                 ApplyPageNumbers(doc, pagination.AnchorPageMap);
-                doc.MainDocumentPart!.Document.Save();
+                doc.MainDocumentPart!.Document!.Save();
 
                 var part = doc.ExtendedFilePropertiesPart ?? doc.AddExtendedFilePropertiesPart();
                 if (part.Properties == null)
