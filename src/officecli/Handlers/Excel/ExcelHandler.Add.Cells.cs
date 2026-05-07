@@ -657,11 +657,35 @@ public partial class ExcelHandler
 
     private string AddCol(string parentPath, string type, InsertPosition? position, Dictionary<string, string> properties)
     {
-        var index = position?.Index;
         var colSegments = parentPath.TrimStart('/').Split('/', 2);
         var colSheetName = colSegments[0];
         var colWorksheet = FindWorksheet(colSheetName)
             ?? throw new ArgumentException($"Sheet not found: {colSheetName}");
+
+        // Resolve --before / --after anchors, mirroring AddRow. Anchor must
+        // be /<sheetName>/col[L] in the same sheet; --before takes the
+        // anchor's slot, --after lands one column to the right.
+        int? index = position?.Index;
+        if (index == null && position != null && (position.After != null || position.Before != null))
+        {
+            int FindAnchorColIndex(string anchorPath)
+            {
+                var aSegs = anchorPath.TrimStart('/').Split('/', 2);
+                if (aSegs.Length < 2)
+                    throw new ArgumentException(
+                        $"Anchor must be a column path like /{colSheetName}/col[L], got: {anchorPath}");
+                if (!aSegs[0].Equals(colSheetName, StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException(
+                        $"Anchor sheet '{aSegs[0]}' must match target sheet '{colSheetName}'");
+                var am = Regex.Match(aSegs[1], @"^col\[([A-Za-z]+)\]$", RegexOptions.IgnoreCase);
+                if (!am.Success)
+                    throw new ArgumentException(
+                        $"Anchor must be a column path like /{colSheetName}/col[L], got: {anchorPath}");
+                return ColumnNameToIndex(am.Groups[1].Value.ToUpperInvariant());
+            }
+            if (position.Before != null) index = FindAnchorColIndex(position.Before);
+            else index = FindAnchorColIndex(position.After!) + 1;
+        }
 
         // Determine insert column: index (1-based) or name/letter from properties
         // CONSISTENCY(col-letter-prop): accept col=, letter=, column= as aliases of name=
