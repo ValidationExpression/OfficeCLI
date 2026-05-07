@@ -7,7 +7,9 @@ using System.Text.RegularExpressions;
 namespace OfficeCli.Core;
 
 /// <summary>
-/// Direction of insertion that triggered a formula reference shift.
+/// Direction of insertion or deletion that triggered a formula reference shift.
+/// Insert directions shift refs by +1; delete directions shift refs by -1
+/// and collapse refs that landed on the deleted index into <c>#REF!</c>.
 /// </summary>
 public enum FormulaShiftDirection
 {
@@ -15,6 +17,10 @@ public enum FormulaShiftDirection
     ColumnsRight,
     /// <summary>A row was inserted; cell-ref rows at or past insertIdx shift down by 1.</summary>
     RowsDown,
+    /// <summary>A column was deleted; refs to that column collapse to <c>#REF!</c>, refs past it shift left by 1.</summary>
+    ColumnsLeft,
+    /// <summary>A row was deleted; refs to that row collapse to <c>#REF!</c>, refs past it shift up by 1.</summary>
+    RowsUp,
 }
 
 /// <summary>
@@ -168,21 +174,108 @@ public static class FormulaRefShifter
             string r2 = m.Groups["r2"].Value;
 
             string sheetPrefix = string.IsNullOrEmpty(sheetGroup) ? "" : sheetGroup + "!";
+            bool isRange = !string.IsNullOrEmpty(c2);
 
-            string newC1 = direction == FormulaShiftDirection.ColumnsRight
-                ? ShiftColPart(c1, insertIdx) : c1;
-            string newR1 = direction == FormulaShiftDirection.RowsDown
-                ? ShiftRowPart(r1, insertIdx) : r1;
+            // For each axis (col, row), compute the new value or null=#REF!.
+            // For Insert directions, shifts never produce #REF!. For Delete
+            // directions, an endpoint exactly on the deleted index either
+            // collapses (single ref → #REF!), keeps the same row/col number
+            // when it is the start endpoint of a range (now points to the
+            // next row/col), or moves up/left when it is the end endpoint
+            // (range shrinks by 1).
+            var (newC1, newC2, colRef) = ShiftColAxis(c1, c2, isRange, direction, insertIdx);
+            var (newR1, newR2, rowRef) = ShiftRowAxis(r1, r2, isRange, direction, insertIdx);
+            if (colRef || rowRef) return "#REF!";
 
-            if (string.IsNullOrEmpty(c2))
+            if (!isRange)
                 return $"{sheetPrefix}{newC1}{newR1}";
 
-            string newC2 = direction == FormulaShiftDirection.ColumnsRight
-                ? ShiftColPart(c2, insertIdx) : c2;
-            string newR2 = direction == FormulaShiftDirection.RowsDown
-                ? ShiftRowPart(r2, insertIdx) : r2;
             return $"{sheetPrefix}{newC1}{newR1}:{newC2}{newR2}";
         });
+    }
+
+    private static (string newC1, string newC2, bool refError) ShiftColAxis(
+        string c1, string c2, bool isRange, FormulaShiftDirection direction, int insertIdx)
+    {
+        switch (direction)
+        {
+            case FormulaShiftDirection.ColumnsRight:
+                return (ShiftColPart(c1, insertIdx),
+                        isRange ? ShiftColPart(c2, insertIdx) : c2,
+                        false);
+            case FormulaShiftDirection.ColumnsLeft:
+                var (nc1, nc2, refErr) = DeleteShiftAxis(
+                    c1, c2, isRange, insertIdx,
+                    parseIdx: ColumnLettersToIndex,
+                    formatIdx: (idx, abs) => (abs ? "$" : "") + IndexToColumnLetters(idx),
+                    parseAbs: s => s.StartsWith('$'),
+                    parseDigits: s => s.StartsWith('$') ? s[1..] : s);
+                return (nc1, nc2, refErr);
+            default:
+                return (c1, c2, false);
+        }
+    }
+
+    private static (string newR1, string newR2, bool refError) ShiftRowAxis(
+        string r1, string r2, bool isRange, FormulaShiftDirection direction, int insertIdx)
+    {
+        switch (direction)
+        {
+            case FormulaShiftDirection.RowsDown:
+                return (ShiftRowPart(r1, insertIdx),
+                        isRange ? ShiftRowPart(r2, insertIdx) : r2,
+                        false);
+            case FormulaShiftDirection.RowsUp:
+                var (nr1, nr2, refErr) = DeleteShiftAxis(
+                    r1, r2, isRange, insertIdx,
+                    parseIdx: s => int.Parse(s),
+                    formatIdx: (idx, abs) => (abs ? "$" : "") + idx,
+                    parseAbs: s => s.StartsWith('$'),
+                    parseDigits: s => s.StartsWith('$') ? s[1..] : s);
+                return (nr1, nr2, refErr);
+            default:
+                return (r1, r2, false);
+        }
+    }
+
+    /// <summary>
+    /// Shared delete-direction logic for both row and column axes. Returns
+    /// the new endpoint strings and a refError flag set when the ref must
+    /// collapse to <c>#REF!</c>.
+    /// </summary>
+    private static (string n1, string n2, bool refError) DeleteShiftAxis(
+        string p1, string p2, bool isRange, int deletedIdx,
+        Func<string, int> parseIdx,
+        Func<int, bool, string> formatIdx,
+        Func<string, bool> parseAbs,
+        Func<string, string> parseDigits)
+    {
+        bool abs1 = parseAbs(p1);
+        int idx1 = parseIdx(parseDigits(p1));
+
+        if (!isRange)
+        {
+            if (idx1 == deletedIdx) return (p1, p2, true);
+            if (idx1 > deletedIdx) return (formatIdx(idx1 - 1, abs1), p2, false);
+            return (p1, p2, false);
+        }
+
+        bool abs2 = parseAbs(p2);
+        int idx2 = parseIdx(parseDigits(p2));
+
+        // Endpoint at deleted index: as start, stays at deletedIdx (now points
+        // to the next survivor); as end, becomes deletedIdx-1 (range shrinks).
+        int newIdx1 = idx1 == deletedIdx ? deletedIdx
+                    : idx1 > deletedIdx ? idx1 - 1
+                    : idx1;
+        int newIdx2 = idx2 == deletedIdx ? deletedIdx - 1
+                    : idx2 > deletedIdx ? idx2 - 1
+                    : idx2;
+
+        // Range collapsed past zero or inverted (e.g. A3:A3 with row 3 deleted).
+        if (newIdx1 > newIdx2 || newIdx2 < 1) return (p1, p2, true);
+
+        return (formatIdx(newIdx1, abs1), formatIdx(newIdx2, abs2), false);
     }
 
     private static string ShiftColPart(string colPart, int insertColIdx)

@@ -997,13 +997,20 @@ public partial class ExcelHandler
                         f.Text, sheetName, sheetName, direction, insertIdx);
 
                 // Shared/array formulas carry their spill range on the `ref`
-                // attribute. Same A1 range syntax → same shifter applies.
+                // attribute. Same A1 range syntax — pick the matching helper
+                // for the direction.
                 if (f.Reference?.Value != null)
                 {
-                    var shifted = direction == Core.FormulaShiftDirection.ColumnsRight
-                        ? ShiftColInRefRight(f.Reference.Value, insertIdx)
-                        : ShiftRowInRefDown(f.Reference.Value, insertIdx);
+                    var shifted = direction switch
+                    {
+                        Core.FormulaShiftDirection.ColumnsRight => ShiftColInRefRight(f.Reference.Value, insertIdx),
+                        Core.FormulaShiftDirection.RowsDown => ShiftRowInRefDown(f.Reference.Value, insertIdx),
+                        Core.FormulaShiftDirection.ColumnsLeft => ShiftColInRef(f.Reference.Value, insertIdx),
+                        Core.FormulaShiftDirection.RowsUp => ShiftRowInRef(f.Reference.Value, insertIdx),
+                        _ => f.Reference.Value,
+                    };
                     if (shifted != null) f.Reference = shifted;
+                    else f.Remove();
                 }
             }
         }
@@ -1152,8 +1159,43 @@ public partial class ExcelHandler
             else af.Remove();
         }
 
-        // 6. Named ranges (workbook-level)
+        // 6. Hyperlinks (per-cell anchor refs)
+        var hyperlinks = ws.GetFirstChild<Hyperlinks>();
+        if (hyperlinks != null)
+        {
+            foreach (var hl in hyperlinks.Elements<Hyperlink>().ToList())
+            {
+                if (hl.Reference?.Value == null) continue;
+                var shifted = ShiftRowInRef(hl.Reference.Value, deletedRow);
+                if (shifted == null) hl.Remove();
+                else hl.Reference = shifted;
+            }
+            if (!hyperlinks.HasChildren) hyperlinks.Remove();
+        }
+
+        // 7. Tables (table.ref + autoFilter.ref inside table parts)
+        foreach (var tablePart in worksheet.TableDefinitionParts)
+        {
+            var tbl = tablePart.Table;
+            if (tbl == null) continue;
+            if (tbl.Reference?.Value != null)
+            {
+                var shifted = ShiftRowInRef(tbl.Reference.Value, deletedRow);
+                if (shifted != null) tbl.Reference = shifted;
+            }
+            if (tbl.AutoFilter?.Reference?.Value != null)
+            {
+                var shifted = ShiftRowInRef(tbl.AutoFilter.Reference.Value, deletedRow);
+                if (shifted != null) tbl.AutoFilter.Reference = shifted;
+            }
+            tbl.Save();
+        }
+
+        // 8. Named ranges (workbook-level)
         ShiftNamedRangeRows(worksheet, deletedRow);
+
+        // 9. Formula refs in cells + shared/array formula `ref` attributes
+        RewriteFormulaRefsInSheet(worksheet, Core.FormulaShiftDirection.RowsUp, deletedRow);
     }
 
     // ==================== Column shift ====================
@@ -1258,8 +1300,43 @@ public partial class ExcelHandler
             else af.Remove();
         }
 
-        // 7. Named ranges
+        // 7. Hyperlinks (per-cell anchor refs)
+        var hyperlinks = ws.GetFirstChild<Hyperlinks>();
+        if (hyperlinks != null)
+        {
+            foreach (var hl in hyperlinks.Elements<Hyperlink>().ToList())
+            {
+                if (hl.Reference?.Value == null) continue;
+                var shifted = ShiftColInRef(hl.Reference.Value, deletedColIdx);
+                if (shifted == null) hl.Remove();
+                else hl.Reference = shifted;
+            }
+            if (!hyperlinks.HasChildren) hyperlinks.Remove();
+        }
+
+        // 8. Tables (table.ref + autoFilter.ref inside table parts)
+        foreach (var tablePart in worksheet.TableDefinitionParts)
+        {
+            var tbl = tablePart.Table;
+            if (tbl == null) continue;
+            if (tbl.Reference?.Value != null)
+            {
+                var shifted = ShiftColInRef(tbl.Reference.Value, deletedColIdx);
+                if (shifted != null) tbl.Reference = shifted;
+            }
+            if (tbl.AutoFilter?.Reference?.Value != null)
+            {
+                var shifted = ShiftColInRef(tbl.AutoFilter.Reference.Value, deletedColIdx);
+                if (shifted != null) tbl.AutoFilter.Reference = shifted;
+            }
+            tbl.Save();
+        }
+
+        // 9. Named ranges
         ShiftNamedRangeCols(worksheet, deletedColIdx);
+
+        // 10. Formula refs in cells + shared/array formula `ref` attributes
+        RewriteFormulaRefsInSheet(worksheet, Core.FormulaShiftDirection.ColumnsLeft, deletedColIdx);
     }
 
     // ==================== Shift helpers ====================
