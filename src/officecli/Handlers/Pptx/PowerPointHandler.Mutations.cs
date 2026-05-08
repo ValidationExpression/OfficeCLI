@@ -363,6 +363,15 @@ public partial class PowerPointHandler
             ?? throw new InvalidOperationException("Presentation not found");
         var slideParts = GetSlideParts().ToList();
 
+        // Case 0: Move table row within the same table.
+        // Path: /slide[N]/table[K]/tr[R]. Cross-table row moves are out of
+        // scope (column counts may differ; user can copy + remove instead).
+        var trMoveMatch = Regex.Match(sourcePath, @"^/slide\[(\d+)\]/table\[(\d+)\]/tr\[(\d+)\]$");
+        if (trMoveMatch.Success)
+        {
+            return MoveTableRow(trMoveMatch, position, targetParentPath);
+        }
+
         // Case 1: Move entire slide (reorder)
         var slideOnlyMatch = Regex.Match(sourcePath, @"^/slide\[(\d+)\]$");
         if (slideOnlyMatch.Success)
@@ -643,6 +652,16 @@ public partial class PowerPointHandler
         targetParentPath = ResolveLastPredicates(targetParentPath);
         var slideParts = GetSlideParts().ToList();
 
+        // Table row clone: --from /slide[N]/table[K]/tr[R] [target /slide[N]/table[K]].
+        // Same-table only (cross-table row copy is out of scope; column counts
+        // may differ silently). If targetParentPath is null/empty, defaults to
+        // source table — i.e. "duplicate row in place".
+        var trCloneMatch = Regex.Match(sourcePath, @"^/slide\[(\d+)\]/table\[(\d+)\]/tr\[(\d+)\]$");
+        if (trCloneMatch.Success)
+        {
+            return CopyTableRow(trCloneMatch, position, targetParentPath);
+        }
+
         // Whole-slide clone: --from /slide[N] to / (or null == "duplicate in
         // place" at presentation root, i.e. append the clone after the source
         // slide).
@@ -691,6 +710,132 @@ public partial class PowerPointHandler
         GetSlide(tgtSlidePart).Save();
 
         return ComputeElementPath(targetParentPath, clone, tgtShapeTree);
+    }
+
+    /// <summary>
+    /// Move a table row within its table by --before/--after/--index. Cross-table
+    /// moves are intentionally rejected: column counts may differ silently and
+    /// "move row across tables" has no precedent in the Office UI.
+    /// </summary>
+    private string MoveTableRow(Match trMatch, InsertPosition? position, string? targetParentPath)
+    {
+        var slideIdx = int.Parse(trMatch.Groups[1].Value);
+        var tableIdx = int.Parse(trMatch.Groups[2].Value);
+        var rowIdx = int.Parse(trMatch.Groups[3].Value);
+
+        // If targetParentPath is supplied it must point at the same table.
+        if (!string.IsNullOrEmpty(targetParentPath))
+        {
+            var expected = $"/slide[{slideIdx}]/table[{tableIdx}]";
+            if (!string.Equals(targetParentPath, expected, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"Cross-table row move is not supported. Source row's table is {expected}; target was {targetParentPath}. " +
+                    "Use `add --from <row>` followed by `remove <row>` to copy a row to a different table.");
+        }
+
+        var (slidePart, table) = ResolveTable(slideIdx, tableIdx);
+        var rows = table.Elements<Drawing.TableRow>().ToList();
+        if (rowIdx < 1 || rowIdx > rows.Count)
+            throw new ArgumentException($"Row {rowIdx} not found (total: {rows.Count})");
+        var row = rows[rowIdx - 1];
+
+        // Resolve --before/--after anchor relative to sibling rows (1-based)
+        // before mutating, then convert to a 0-based target position.
+        int? targetIdx = null;
+        if (position?.After != null || position?.Before != null)
+        {
+            var anchorPath = ResolveIdPath(position.After ?? position.Before!);
+            var anchorMatch = Regex.Match(anchorPath, @"^/slide\[(\d+)\]/table\[(\d+)\]/tr\[(\d+)\]$");
+            if (!anchorMatch.Success ||
+                int.Parse(anchorMatch.Groups[1].Value) != slideIdx ||
+                int.Parse(anchorMatch.Groups[2].Value) != tableIdx)
+            {
+                throw new ArgumentException(
+                    $"Move row anchor must be a row in the same table: /slide[{slideIdx}]/table[{tableIdx}]/tr[N]. Got: {anchorPath}");
+            }
+            var anchorRowIdx = int.Parse(anchorMatch.Groups[3].Value); // 1-based
+            // Self-anchor is a no-op
+            if (anchorRowIdx == rowIdx)
+                return $"/slide[{slideIdx}]/table[{tableIdx}]/tr[{rowIdx}]";
+            targetIdx = position.After != null ? anchorRowIdx : anchorRowIdx - 1; // 0-based
+            // Compensate when removing the source shifts later siblings up
+            if (rowIdx < anchorRowIdx) targetIdx -= 1;
+        }
+        else if (position?.Index.HasValue == true)
+        {
+            targetIdx = position.Index.Value;
+        }
+
+        row.Remove();
+        var remaining = table.Elements<Drawing.TableRow>().ToList();
+        if (targetIdx.HasValue && targetIdx.Value >= 0 && targetIdx.Value < remaining.Count)
+            remaining[targetIdx.Value].InsertBeforeSelf(row);
+        else
+            table.AppendChild(row);
+
+        GetSlide(slidePart).Save();
+        var newRows = table.Elements<Drawing.TableRow>().ToList();
+        var newRowIdx = newRows.IndexOf(row) + 1;
+        return $"/slide[{slideIdx}]/table[{tableIdx}]/tr[{newRowIdx}]";
+    }
+
+    /// <summary>
+    /// Clone a table row inside the same table (or duplicate-in-place when no
+    /// target supplied). Cross-table copies are out of scope to keep grid
+    /// width semantics unambiguous.
+    /// </summary>
+    private string CopyTableRow(Match trMatch, InsertPosition? position, string? targetParentPath)
+    {
+        var slideIdx = int.Parse(trMatch.Groups[1].Value);
+        var tableIdx = int.Parse(trMatch.Groups[2].Value);
+        var rowIdx = int.Parse(trMatch.Groups[3].Value);
+
+        if (!string.IsNullOrEmpty(targetParentPath))
+        {
+            var expected = $"/slide[{slideIdx}]/table[{tableIdx}]";
+            if (!string.Equals(targetParentPath, expected, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"Cross-table row copy is not supported. Source row's table is {expected}; target was {targetParentPath}.");
+        }
+
+        var (slidePart, table) = ResolveTable(slideIdx, tableIdx);
+        var rows = table.Elements<Drawing.TableRow>().ToList();
+        if (rowIdx < 1 || rowIdx > rows.Count)
+            throw new ArgumentException($"Row {rowIdx} not found (total: {rows.Count})");
+
+        var clone = (Drawing.TableRow)rows[rowIdx - 1].CloneNode(true);
+
+        // Resolve --before/--after anchor first (relative to current sibling order).
+        int? targetIdx = null;
+        if (position?.After != null || position?.Before != null)
+        {
+            var anchorPath = ResolveIdPath(position.After ?? position.Before!);
+            var anchorMatch = Regex.Match(anchorPath, @"^/slide\[(\d+)\]/table\[(\d+)\]/tr\[(\d+)\]$");
+            if (!anchorMatch.Success ||
+                int.Parse(anchorMatch.Groups[1].Value) != slideIdx ||
+                int.Parse(anchorMatch.Groups[2].Value) != tableIdx)
+            {
+                throw new ArgumentException(
+                    $"Copy row anchor must be a row in the same table: /slide[{slideIdx}]/table[{tableIdx}]/tr[N]. Got: {anchorPath}");
+            }
+            var anchorRowIdx = int.Parse(anchorMatch.Groups[3].Value);
+            targetIdx = position.After != null ? anchorRowIdx : anchorRowIdx - 1; // 0-based
+        }
+        else if (position?.Index.HasValue == true)
+        {
+            targetIdx = position.Index.Value;
+        }
+
+        var siblings = table.Elements<Drawing.TableRow>().ToList();
+        if (targetIdx.HasValue && targetIdx.Value >= 0 && targetIdx.Value < siblings.Count)
+            siblings[targetIdx.Value].InsertBeforeSelf(clone);
+        else
+            table.AppendChild(clone);
+
+        GetSlide(slidePart).Save();
+        var newRows = table.Elements<Drawing.TableRow>().ToList();
+        var newRowIdx = newRows.IndexOf(clone) + 1;
+        return $"/slide[{slideIdx}]/table[{tableIdx}]/tr[{newRowIdx}]";
     }
 
     /// <summary>

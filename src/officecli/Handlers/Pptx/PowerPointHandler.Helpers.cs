@@ -130,6 +130,21 @@ public partial class PowerPointHandler
                 return elemIdx;
         }
 
+        // Table sub-element anchors: /slide[N]/table[K]/(tr|row|col|column)[N]
+        // Used by `add --type row/col --before/--after` on PPT tables. The
+        // anchor's positional index is all we need — the dispatcher (AddRow /
+        // AddColumn) consumes the returned index against the table's own
+        // tr/gridCol list.
+        var tableSubMatch = Regex.Match(anchorPath, @"^/slide\[(\d+)\]/table\[(\d+)\]/(tr|row|col|column)\[(\d+)\]$");
+        if (tableSubMatch.Success)
+        {
+            var subIdx = int.Parse(tableSubMatch.Groups[4].Value) - 1; // 0-based
+            if (position.After != null)
+                return subIdx + 1;
+            else
+                return subIdx;
+        }
+
         throw new ArgumentException($"Cannot resolve anchor path: {anchorPath}");
     }
 
