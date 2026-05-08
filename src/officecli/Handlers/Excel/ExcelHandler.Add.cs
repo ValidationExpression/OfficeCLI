@@ -951,6 +951,46 @@ public partial class ExcelHandler
                     c.CellReference = $"{m.Groups[1].Value.ToUpperInvariant()}{newRowIndex}";
             }
 
+            // mergeCells live in the sheet-level <mergeCells> container, not
+            // inside the row's subtree, so CloneNode misses them. Walk the
+            // SOURCE sheet's mergeCells for entries whose start AND end rows
+            // both equal the source row index (single-row merges within the
+            // copied row), and add a corresponding mergeCell at the new row
+            // index. Multi-row merges that include the source row are out of
+            // scope for row-copy semantics — they belong to a region, not a
+            // single row.
+            var srcMergeCells = GetSheet(worksheet).GetFirstChild<MergeCells>();
+            if (srcMergeCells != null)
+            {
+                var newMergesToAdd = new List<string>();
+                foreach (var mc in srcMergeCells.Elements<MergeCell>())
+                {
+                    var refStr = mc.Reference?.Value;
+                    if (string.IsNullOrEmpty(refStr)) continue;
+                    var parts = refStr.Split(':');
+                    if (parts.Length != 2) continue;
+                    var ms = Regex.Match(parts[0], @"^([A-Z]+)(\d+)$", RegexOptions.IgnoreCase);
+                    var me = Regex.Match(parts[1], @"^([A-Z]+)(\d+)$", RegexOptions.IgnoreCase);
+                    if (!ms.Success || !me.Success) continue;
+                    if (uint.Parse(ms.Groups[2].Value) == rowIdx
+                        && uint.Parse(me.Groups[2].Value) == rowIdx)
+                    {
+                        newMergesToAdd.Add(
+                            $"{ms.Groups[1].Value.ToUpperInvariant()}{newRowIndex}:" +
+                            $"{me.Groups[1].Value.ToUpperInvariant()}{newRowIndex}");
+                    }
+                }
+                if (newMergesToAdd.Count > 0)
+                {
+                    var tgtSheetEl = GetSheet(tgtWorksheet);
+                    var tgtMergeCells = tgtSheetEl.GetFirstChild<MergeCells>()
+                        ?? tgtSheetEl.AppendChild(new MergeCells());
+                    foreach (var newRef in newMergesToAdd)
+                        tgtMergeCells.AppendChild(new MergeCell { Reference = newRef });
+                    tgtMergeCells.Count = (uint)tgtMergeCells.Elements<MergeCell>().Count();
+                }
+            }
+
             SaveWorksheet(tgtWorksheet);
             return $"{targetParentPath}/row[{newRowIndex}]";
         }
