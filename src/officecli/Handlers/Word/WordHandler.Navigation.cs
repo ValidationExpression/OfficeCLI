@@ -3085,7 +3085,11 @@ public partial class WordHandler
         var rh = trPr.GetFirstChild<TableRowHeight>();
         if (rh?.Val?.Value != null)
         {
-            node.Format["height"] = rh.Val.Value;
+            // CONSISTENCY(unit-qualified-readback): docx stores row height
+            // in twips (1pt = 20 twips); emit as "{n}pt" to match xlsx/pptx
+            // unit-qualified readback (CLAUDE.md canonical value rule).
+            var heightPt = rh.Val.Value / 20.0;
+            node.Format["height"] = $"{heightPt.ToString(System.Globalization.CultureInfo.InvariantCulture)}pt";
             if (rh.HeightType?.Value == HeightRuleValues.Exact)
                 node.Format["height.rule"] = "exact";
         }

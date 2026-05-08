@@ -1222,8 +1222,10 @@ public partial class ExcelHandler
                 Type = "row",
                 ChildCount = row.Elements<Cell>().Count()
             };
+            // CONSISTENCY(unit-qualified-readback): pt-suffix row height
+            // (Query.cs:433/1367 mirror). Stored value is already points.
             if (row.Height?.Value != null)
-                rowNode.Format["height"] = row.Height.Value;
+                rowNode.Format["height"] = $"{row.Height.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}pt";
             if (row.Hidden?.Value == true)
                 rowNode.Format["hidden"] = true;
 

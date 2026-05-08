@@ -430,7 +430,11 @@ public partial class ExcelHandler
             {
                 Path = path, Type = "row", ChildCount = row.Elements<Cell>().Count()
             };
-            if (row.Height?.Value != null) rowNode.Format["height"] = row.Height.Value;
+            // CONSISTENCY(unit-qualified-readback): row height is stored in
+            // points in OOXML; emit as "{n}pt" so it matches pptx's
+            // unit-qualified readback (CLAUDE.md canonical value rule).
+            if (row.Height?.Value != null)
+                rowNode.Format["height"] = $"{row.Height.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}pt";
             if (row.Hidden?.Value == true) rowNode.Format["hidden"] = true;
             if (row.OutlineLevel?.HasValue == true && row.OutlineLevel.Value > 0)
                 rowNode.Format["outlineLevel"] = (int)row.OutlineLevel.Value;
@@ -1364,7 +1368,8 @@ public partial class ExcelHandler
                         ChildCount = row.Elements<Cell>().Count(),
                         Preview = rowIdx.ToString()
                     };
-                    if (row.Height?.Value != null) node.Format["height"] = row.Height.Value;
+                    if (row.Height?.Value != null)
+                        node.Format["height"] = $"{row.Height.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}pt";
                     if (row.Hidden?.Value == true) node.Format["hidden"] = true;
                     if (row.CustomHeight?.Value == true) node.Format["customHeight"] = true;
                     if (row.OutlineLevel?.HasValue == true && row.OutlineLevel.Value > 0)
