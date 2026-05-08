@@ -1,10 +1,12 @@
 # OfficeCLI
 
-> **OfficeCLI is the world's first and the best command-line designed for AI agents.**
+> **OfficeCLI is the world's first and the best Office suite designed for AI agents.**
 
-**Give any AI agent full control over Word, Excel, and PowerPoint -- in one line of code.**
+**Give any AI agent full control over Word, Excel, and PowerPoint — in one line of code.**
 
 Open-source. Single binary. No Office installation. No dependencies. Works everywhere.
+
+**Built-in agent-friendly rendering engine** — agents can *see* what they create, no Office required. Render `.docx` / `.xlsx` / `.pptx` to HTML or PNG, closing the *render → look → fix* loop anywhere the binary runs.
 
 [![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -66,8 +68,6 @@ curl -fsSL https://officecli.ai/SKILL.md
 
 That's it. The skill file teaches the agent how to install the binary and use all commands.
 
-> **Technical details:** OfficeCLI ships with a [SKILL.md](SKILL.md) that covers command syntax, architecture, and common pitfalls. After installation, your agent can immediately create, read, and modify any Office document.
-
 ## For Humans
 
 **Option A — GUI:** Install [**AionUi**](https://github.com/iOfficeAI/AionUi) — a desktop app that lets you create and edit Office documents through natural language, powered by OfficeCLI under the hood. Just describe what you want, and AionUi handles the rest.
@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh
 officecli create deck.pptx
 
 # 3. Start live preview — opens http://localhost:26315 in your browser
-officecli watch deck.pptx --port 26315
+officecli watch deck.pptx
 
 # 4. Open another terminal, add a slide — watch the browser update instantly
 officecli add deck.pptx / --type slide --prop title="Hello, World!"
@@ -230,16 +230,56 @@ Updates are checked automatically in the background. Disable with `officecli con
 
 ## Key Features
 
-### Live Preview
+### Built-in Engines & Generation Primitives
 
-`watch` starts a local HTTP server with a live HTML preview of your PowerPoint file. Every modification auto-refreshes in the browser — ideal for iterative design with AI agents.
+OfficeCLI is self-contained. The capabilities below ship inside the binary — **no Office required**.
+
+#### Rendering engine
+
+A from-scratch agent-friendly rendering engine ships in the binary itself, covering shapes, charts (trendlines, error bars, waterfall, candlestick, sparklines), equations (OMML → MathJax-compatible), 3D `.glb` models via Three.js, morph transitions, slide zoom, and shape effects. Per-page PNG screenshots are produced by piping the rendered HTML through a headless browser. Three modes:
+
+- **`view html`** — standalone HTML file, assets inlined. Open in any browser.
+- **`view screenshot`** — per-page PNG, ready for multimodal agents to read.
+- **`watch`** — local HTTP server with auto-refreshing preview; every `add` / `set` / `remove` updates the browser instantly. Excel watch supports inline cell editing and drag-to-reposition charts.
 
 ```bash
-officecli watch deck.pptx
-# Opens http://localhost:26315 — refreshes on every set/add/remove
+officecli view deck.pptx html -o /tmp/deck.html
+officecli view deck.pptx screenshot -o /tmp/deck.png # add --page 1-N for more slides
+officecli watch deck.pptx                            # http://localhost:26315
 ```
 
-Renders shapes, charts (with trendlines, error bars, pseudo-3D, waterfall, stock candlestick), equations, 3D models (Three.js), morph transitions, zoom navigation, and all shape effects. Excel watch features native-style green cell selection, rectangular range selection, **double-click inline cell editing**, and **drag-to-reposition charts**.
+> Without visualization, an agent generating slides is flying blind — it can read the DOM but can't tell if the title overflows or two shapes overlap. Because rendering is built into the binary, the *render → look → fix* loop works in CI, in Docker, on a server with no display — anywhere the binary runs.
+
+#### Formula & pivot engine
+
+150+ built-in Excel functions evaluated automatically on write — write `=SUM(A1:A2)`, `get` the cell, the value is already there. No round-trip through Office to recalc. Covers dynamic-array functions (`FILTER` / `UNIQUE` / `SORT` / `SEQUENCE` with auto `_xlfn.` prefix), `VLOOKUP` / `INDEX` / `MATCH`, date & text functions, and 140+ more.
+
+Plus native OOXML pivot tables from a source range with one command — multi-field rows/cols/filters, 10 aggregations, `showDataAs` modes, date grouping, calculated fields, top-N, layouts. Pivot cache + definition are written to OOXML, so Excel opens the file with the aggregation already populated:
+
+```bash
+officecli add sales.xlsx '/Sheet1' --type pivottable \
+  --prop source='Data!A1:E10000' --prop rows='Region,Category' \
+  --prop cols=Quarter --prop values='Revenue:sum,Units:avg' \
+  --prop showDataAs=percentOfTotal
+```
+
+#### Template merge — generate once, fill many
+
+`merge` replaces `{{key}}` placeholders in any `.docx` / `.xlsx` / `.pptx` with JSON data — across paragraphs, table cells, shapes, headers, footers, and chart titles. Agent designs the layout once (expensive); production code fills it N times (cheap, deterministic, zero token cost). Avoids the failure mode where an agent regenerates each report from scratch and produces N inconsistent layouts.
+
+```bash
+officecli merge invoice-template.docx out-001.docx '{"client":"Acme","total":"$5,200"}'
+officecli merge q4-template.pptx q4-acme.pptx data.json
+```
+
+#### Round-trip dump — learn from existing docs
+
+`dump` serializes any `.docx` into a replayable batch JSON; `batch` replays it. Given a sample document the user wants to imitate, an agent reads the structured spec — paragraphs, styles, table shape — instead of raw OOXML XML, mutates, and replays. Bridges "I have an existing template" and "generate me 100 variations."
+
+```bash
+officecli dump existing.docx -o blueprint.json
+officecli batch new.docx --input blueprint.json
+```
 
 ### Resident Mode & Batch
 
@@ -270,7 +310,7 @@ Start simple, go deep only when needed.
 
 | Layer | Purpose | Commands |
 |-------|---------|----------|
-| **L1: Read** | Semantic views of content | `view` (text, annotated, outline, stats, issues, html) |
+| **L1: Read** | Semantic views of content | `view` (text, annotated, outline, stats, issues, html, svg, screenshot) |
 | **L2: DOM** | Structured element operations | `get`, `query`, `set`, `add`, `remove`, `move`, `swap` |
 | **L3: Raw XML** | Direct XPath access — universal fallback | `raw`, `raw-set`, `add-part`, `validate` |
 
@@ -335,33 +375,18 @@ curl -fsSL https://officecli.ai/SKILL.md -o ~/.claude/skills/officecli.md
 
 </details>
 
-**Call from any language:**
+### Why your agent will thrive on OfficeCLI
 
-```python
-# Python
-import subprocess, json
-def cli(*args): return subprocess.check_output(["officecli", *args], text=True)
-cli("create", "deck.pptx")
-cli("set", "deck.pptx", "/slide[1]/shape[1]", "--prop", "text=Hello")
-```
-
-```js
-// JavaScript
-const { execFileSync } = require('child_process')
-const cli = (...args) => execFileSync('officecli', args, { encoding: 'utf8' })
-cli('set', 'deck.pptx', '/slide[1]/shape[1]', '--prop', 'text=Hello')
-```
-
-Every command supports `--json` for structured output. Path-based addressing means agents don't need to understand XML namespaces.
-
-### Why agents love OfficeCLI
-
-- **Deterministic JSON output** -- Every command supports `--json`, returning structured data with consistent schemas. No regex parsing needed.
-- **Path-based addressing** -- Every element has a stable path (`/slide[1]/shape[2]`). Agents navigate documents without understanding XML namespaces. Note: these paths use OfficeCLI's own syntax (1-based indexing, element local names), not XPath.
-- **Progressive complexity** -- Start with L1 (read), escalate to L2 (modify), fall back to L3 (raw XML) only when needed. Minimizes token usage.
-- **Self-healing workflow** -- `validate`, `view issues`, and the help system let agents detect problems and self-correct without human intervention.
-- **Built-in help** -- When unsure about property names or value formats, run `officecli <format> set <element>` instead of guessing.
-- **Auto-install** -- No manual skill-file setup. OfficeCLI detects your AI tools and configures itself automatically.
+- **Deterministic JSON output** — every command supports `--json` with consistent schemas. No regex parsing, no scraping stdout.
+- **Path-based addressing** — every element has a stable path (`/slide[1]/shape[2]`). Agents navigate documents without understanding XML namespaces. (OfficeCLI syntax: 1-based indexing, element local names — not XPath.)
+- **Progressive complexity (L1 → L2 → L3)** — agents start with read-only views, escalate to DOM ops, fall back to raw XML only when needed. Minimizes token usage.
+- **Self-healing workflow** — `validate`, `view issues`, and the structured error codes (`not_found`, `invalid_value`, `unsupported_property`) return suggestions and valid ranges. Agents self-correct without human intervention.
+- **Built-in agent-friendly rendering engine** — `view html` / `view screenshot` / `watch` emit HTML and PNG natively. No Office required. Agents can *see* their output and fix layout issues, even inside CI / Docker / headless environments.
+- **Built-in formula & pivot engine** — 150+ Excel functions auto-evaluated on write; native OOXML pivot tables from a source range with one command. Agents read computed values and shipped aggregations immediately, without round-tripping through Office.
+- **Template merge** — agent designs the layout once, downstream code fills `{{key}}` placeholders N times. Avoids burning tokens regenerating every report from scratch.
+- **Round-trip dump** — `dump` turns any `.docx` into replayable batch JSON. Agents learn from human-authored samples by reading a structured spec, not raw OOXML XML.
+- **Built-in help** — when unsure about property names or value formats, the agent runs `officecli <format> set <element>` instead of guessing.
+- **Auto-install** — OfficeCLI detects your AI tooling (Claude Code, Cursor, VS Code, …) and configures itself. No manual skill-file setup.
 
 ### Built-in Help
 
@@ -440,17 +465,14 @@ See `officecli --help` for full details on exit codes and error formats.
 | Call from any language | ✓ (CLI) | ✗ (COM/Add-in) | ✗ (UNO API) | Python only |
 | Path-based element access | ✓ | ✗ | ✗ | ✗ |
 | Raw XML fallback | ✓ | ✗ | ✗ | Partial |
-| Live preview | ✓ | ✓ | ✗ | ✗ |
+| Built-in agent-friendly rendering engine | ✓ | ✗ | ✗ | ✗ |
+| Headless HTML/PNG output | ✓ | ✗ | Partial | ✗ |
+| Template merge (`{{key}}`) across formats | ✓ | ✗ | ✗ | ✗ |
+| Round-trip dump → batch JSON | ✓ | ✗ | ✗ | ✗ |
+| Live preview (auto-refresh on edit) | ✓ | ✗ | ✗ | ✗ |
 | Headless / CI | ✓ | ✗ | Partial | ✓ |
 | Cross-platform | ✓ | Windows/Mac | ✓ | ✓ |
 | Word + Excel + PowerPoint | ✓ | ✓ | ✓ | Separate libs |
-
-## Updates & Configuration
-
-```bash
-officecli config autoUpdate false              # Disable auto-update checks
-OFFICECLI_SKIP_UPDATE=1 officecli ...          # Skip check for one invocation (CI)
-```
 
 ## Command Reference
 
@@ -509,21 +531,6 @@ officecli view report.pptx issues --json
 officecli set report.pptx '/slide[1]/shape[1]' --prop font=Arial
 ```
 
-### Template Merge
-
-Replace `{{key}}` placeholders in any document with JSON data -- works across paragraphs, table cells, shapes, headers, footers, and chart titles.
-
-```bash
-# Merge from inline JSON
-officecli merge template.docx output.docx '{"name":"Alice","dept":"Sales","date":"2026-03-30"}'
-
-# Merge from a JSON file
-officecli merge template.pptx report.pptx data.json
-
-# Excel template
-officecli merge budget-template.xlsx q4-budget.xlsx '{"quarter":"Q4","year":"2026"}'
-```
-
 ### Units & Colors
 
 All dimension and color properties accept flexible input formats:
@@ -556,6 +563,20 @@ officecli merge invoice-template.docx invoice-001.docx '{"client":"Acme","total"
 
 # Check document quality before delivery
 officecli validate report.docx && officecli view report.docx issues --json
+```
+
+**From Python** — wrap once, get parsed JSON back from every call:
+
+```python
+import json, subprocess
+
+def cli(*args):
+    return json.loads(subprocess.check_output(["officecli", *args, "--json"], text=True))
+
+cli("create", "deck.pptx")
+cli("add", "deck.pptx", "/", "--type", "slide", "--prop", "title=Q4 Report")
+slide = cli("get", "deck.pptx", "/slide[1]")
+print(slide["attributes"]["text"])
 ```
 
 ## Documentation

@@ -1,10 +1,12 @@
 # OfficeCLI
 
-> **OfficeCLI は世界初にして最高の、AI エージェント向けに設計されたコマンドラインツールです。**
+> **OfficeCLI は世界初にして最高の、AI エージェント向けに設計された Office スイートです。**
 
 **あらゆる AI エージェントに Word、Excel、PowerPoint の完全な制御権を — たった一行のコードで。**
 
 オープンソース。単一バイナリ。Office のインストール不要。依存関係ゼロ。全プラットフォーム対応。
+
+**エージェントフレンドリーなレンダリングエンジンを内蔵** — エージェントは自分が作ったものを "見る" ことができ、Office 不要。`.docx` / `.xlsx` / `.pptx` を HTML または PNG にレンダリングし、"レンダリング → 見る → 修正" のループはバイナリが動くあらゆる場所で完結します。
 
 [![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -66,8 +68,6 @@ curl -fsSL https://officecli.ai/SKILL.md
 
 これだけです。スキルファイルがエージェントにバイナリのインストール方法と全コマンドの使い方を教えます。
 
-> **技術詳細：** OfficeCLI には [SKILL.md](SKILL.md) が付属し、コマンド構文、アーキテクチャ、よくある落とし穴をカバーしています。インストール後、エージェントはすぐに Office 文書の作成・読み取り・変更が可能です。
-
 ## 一般ユーザー向け
 
 **オプション A — GUI：** [**AionUi**](https://github.com/iOfficeAI/AionUi) をインストール — 自然言語で Office 文書を作成・編集できるデスクトップアプリ。内部で OfficeCLI が動いています。やりたいことを説明するだけで、AionUi がすべて処理します。
@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh
 officecli create deck.pptx
 
 # 3. ライブプレビューを開始 — ブラウザで http://localhost:26315 が開きます
-officecli watch deck.pptx --port 26315
+officecli watch deck.pptx
 
 # 4. 別のターミナルを開いてスライドを追加 — ブラウザが即座に更新されます
 officecli add deck.pptx / --type slide --prop title="Hello, World!"
@@ -230,16 +230,56 @@ officecli            # 直接実行でもインストールがトリガー
 
 ## 主な機能
 
-### ライブプレビュー
+### 内蔵エンジンと生成プリミティブ
 
-`watch` はローカル HTTP サーバーを起動し、PowerPoint ファイルのライブ HTML プレビューを提供します。変更のたびにブラウザが自動更新 — AI エージェントとの反復デザインに最適です。
+OfficeCLI は自己完結型です。以下の機能はすべてバイナリ内蔵 — **Office 不要**。
+
+#### レンダリングエンジン
+
+ゼロから実装したエージェントフレンドリーなレンダリングエンジンがバイナリ内に同梱され、シェイプ、チャート (トレンドライン、エラーバー、ウォーターフォール、ローソク足、スパークライン)、数式 (OMML → MathJax 互換)、Three.js による 3D `.glb` モデル、モーフトランジション、スライドズーム、シェイプエフェクトをカバー。ページごとの PNG スクリーンショットは、レンダリングされた HTML をヘッドレスブラウザに渡して生成されます。3 つのモード:
+
+- **`view html`** — スタンドアロン HTML ファイル、アセットインライン。任意のブラウザで開けます。
+- **`view screenshot`** — ページごとの PNG、マルチモーダルエージェント向け。
+- **`watch`** — ローカル HTTP サーバー + 自動更新プレビュー。`add` / `set` / `remove` でブラウザが即座に更新。Excel watch はインラインセル編集とチャートのドラッグ再配置をサポート。
 
 ```bash
-officecli watch deck.pptx
-# http://localhost:26315 を開く — set/add/remove のたびに自動更新
+officecli view deck.pptx html -o /tmp/deck.html
+officecli view deck.pptx screenshot -o /tmp/deck.png # 複数ページは --page 1-N
+officecli watch deck.pptx                            # http://localhost:26315
 ```
 
-図形、チャート、数式、3D モデル（Three.js）、モーフトランジション、ズームナビゲーション、全シェイプエフェクトをレンダリングします。
+> 可視化なしでは、スライドを生成するエージェントは盲目的に飛んでいるようなもの — DOM は読めても、タイトルがオーバーフローしているか、2 つのシェイプが重なっているかは判断できません。レンダリングがバイナリに内蔵されているため、"レンダリング → 見る → 修正" のループは CI、Docker、ディスプレイのないサーバー — バイナリが動くあらゆる場所で動作します。
+
+#### 数式 & ピボットエンジン
+
+150+ の Excel 関数が書き込み時に自動評価 — `=SUM(A1:A2)` を書いて、セルを `get` する、値はすでにそこに。Office で再計算するラウンドトリップは不要。動的配列関数 (`FILTER` / `UNIQUE` / `SORT` / `SEQUENCE`、`_xlfn.` 自動プレフィックス)、`VLOOKUP` / `INDEX` / `MATCH`、日付・テキスト関数など 140+ の関数をカバー。
+
+加えて、ソース範囲から 1 コマンドでネイティブな OOXML ピボットテーブル — マルチフィールドの行/列/フィルター、10 種類の集計、`showDataAs` モード、日付グループ化、計算フィールド、Top-N、レイアウト。ピボットキャッシュ + 定義は OOXML に書き込まれ、Excel で開くと集計済みの状態で表示されます:
+
+```bash
+officecli add sales.xlsx '/Sheet1' --type pivottable \
+  --prop source='Data!A1:E10000' --prop rows='Region,Category' \
+  --prop cols=Quarter --prop values='Revenue:sum,Units:avg' \
+  --prop showDataAs=percentOfTotal
+```
+
+#### テンプレートマージ — 一度設計、N 回入力
+
+`merge` は任意の `.docx` / `.xlsx` / `.pptx` の `{{key}}` プレースホルダーを JSON データで置換 — 段落、表セル、シェイプ、ヘッダー/フッター、チャートタイトル全体で動作。エージェントが一度レイアウトを設計 (高コスト)、本番コードが N 回入力 (低コスト、決定論的、トークンコストゼロ)。エージェントが各レポートを毎回ゼロから再生成し、N 個の一貫性のないレイアウトを生み出す失敗モードを回避します。
+
+```bash
+officecli merge invoice-template.docx out-001.docx '{"client":"Acme","total":"$5,200"}'
+officecli merge q4-template.pptx q4-acme.pptx data.json
+```
+
+#### Dump によるラウンドトリップ — 既存ドキュメントから学ぶ
+
+`dump` は任意の `.docx` を再生可能なバッチ JSON にシリアライズし、`batch` で再生。ユーザーが模倣したいサンプルドキュメントから、エージェントは生の OOXML XML ではなく構造化された仕様 — 段落、スタイル、表の形 — を読み、変更して再生します。"既存テンプレートがある" と "100 個のバリエーションを生成して" を繋ぎます。
+
+```bash
+officecli dump existing.docx -o blueprint.json
+officecli batch new.docx --input blueprint.json
+```
 
 ### レジデントモードとバッチ
 
@@ -270,7 +310,7 @@ officecli batch deck.pptx --input updates.json --force --json
 
 | レイヤー | 用途 | コマンド |
 |---------|------|---------|
-| **L1：読み取り** | コンテンツのセマンティックビュー | `view`（text、annotated、outline、stats、issues、html） |
+| **L1：読み取り** | コンテンツのセマンティックビュー | `view`（text、annotated、outline、stats、issues、html、svg、screenshot） |
 | **L2：DOM** | 構造化された要素操作 | `get`、`query`、`set`、`add`、`remove`、`move`、`swap` |
 | **L3：生 XML** | XPath による直接アクセス — 万能フォールバック | `raw`、`raw-set`、`add-part`、`validate` |
 
@@ -335,33 +375,18 @@ curl -fsSL https://officecli.ai/SKILL.md -o ~/.claude/skills/officecli.md
 
 </details>
 
-**任意の言語から呼び出し：**
+### エージェントが OfficeCLI で活躍する理由
 
-```python
-# Python
-import subprocess, json
-def cli(*args): return subprocess.check_output(["officecli", *args], text=True)
-cli("create", "deck.pptx")
-cli("set", "deck.pptx", "/slide[1]/shape[1]", "--prop", "text=Hello")
-```
-
-```js
-// JavaScript
-const { execFileSync } = require('child_process')
-const cli = (...args) => execFileSync('officecli', args, { encoding: 'utf8' })
-cli('set', 'deck.pptx', '/slide[1]/shape[1]', '--prop', 'text=Hello')
-```
-
-全コマンドが `--json` で構造化出力に対応。パスベースのアドレッシングにより、エージェントは XML 名前空間を理解する必要がありません。
-
-### エージェントが OfficeCLI を好む理由
-
-- **決定論的な JSON 出力** -- 全コマンドが `--json` に対応し、一貫したスキーマの構造化データを返却。正規表現によるパース不要。
-- **パスベースのアドレッシング** -- 全要素が安定したパスを持つ（`/slide[1]/shape[2]`）。XML 名前空間を理解せずにドキュメントをナビゲート可能。注：パスは OfficeCLI 独自の構文（1始まりのインデックス、要素ローカル名）を使用し、XPath ではありません。
-- **段階的な複雑さ** -- L1（読み取り）から始め、L2（変更）にエスカレート、必要な時だけ L3（生 XML）にフォールバック。トークン消費を最小化。
-- **自己修復ワークフロー** -- `validate`、`view issues`、ヘルプシステムにより、エージェントは人間の介入なしに問題を検出・自己修正可能。
-- **組み込みヘルプ** -- プロパティ名や値の形式が不明な場合、`officecli <format> set <element>` を実行して確認。推測不要。
-- **自動インストール** -- スキルファイルの手動設定不要。OfficeCLI が AI ツールを自動検出して設定を完了。
+- **決定論的 JSON 出力** — すべてのコマンドが `--json` をサポートし、スキーマは一貫。正規表現パース不要、stdout スクレイピング不要。
+- **パスベースのアドレッシング** — すべての要素に安定したパス (`/slide[1]/shape[2]`)。エージェントは XML 名前空間を理解せずにドキュメントをナビゲート可能。(OfficeCLI 独自の構文: 1-based インデックス、要素ローカル名 — XPath ではない。)
+- **段階的複雑度 (L1 → L2 → L3)** — エージェントは読み取り専用ビューから始め、DOM 操作にエスカレート、必要な時のみ raw XML にフォールバック。トークン消費を最小化。
+- **自己修復ワークフロー** — `validate`、`view issues`、構造化エラーコード (`not_found`、`invalid_value`、`unsupported_property`) は suggestion と有効範囲を返します。エージェントは人間の介入なしに自己修正します。
+- **内蔵エージェントフレンドリーレンダリングエンジン** — `view html` / `view screenshot` / `watch` がネイティブに HTML と PNG を出力。Office 不要。エージェントは CI / Docker / ヘッドレス環境でも自分の出力を "見て" レイアウトの問題を修正できます。
+- **内蔵数式 & ピボットエンジン** — 150+ の Excel 関数が書き込み時に自動評価; ソース範囲から 1 コマンドでネイティブ OOXML ピボットテーブル。エージェントは Office で再計算せずに、計算値と集計結果を即座に読み取れます。
+- **テンプレートマージ** — エージェントがレイアウトを一度設計し、下流コードが `{{key}}` プレースホルダーを N 回入力。各レポートを再生成してトークンを焼くことを避けます。
+- **ラウンドトリップ Dump** — `dump` が任意の `.docx` を再生可能なバッチ JSON に変換。エージェントは生の OOXML XML ではなく構造化された仕様を読んで、人間が作成したサンプルから学習。
+- **内蔵ヘルプ** — プロパティ名や値形式に迷ったら、エージェントは推測せず `officecli <format> set <element>` を実行。
+- **自動インストール** — OfficeCLI は使っているツール (Claude Code、Cursor、VS Code…) を検出して自己構成します。手動の skill ファイルセットアップ不要。
 
 ### 組み込みヘルプ
 
@@ -442,17 +467,14 @@ officecli get report.docx /body --depth 1 --json
 | 任意の言語から呼び出し | ✓ (CLI) | ✗ (COM/Add-in) | ✗ (UNO API) | Python のみ |
 | パスベースの要素アクセス | ✓ | ✗ | ✗ | ✗ |
 | 生 XML フォールバック | ✓ | ✗ | ✗ | 部分対応 |
-| ライブプレビュー | ✓ | ✓ | ✗ | ✗ |
+| 内蔵エージェントフレンドリーレンダリングエンジン | ✓ | ✗ | ✗ | ✗ |
+| ヘッドレス HTML/PNG 出力 | ✓ | ✗ | 部分対応 | ✗ |
+| クロスフォーマットテンプレートマージ (`{{key}}`) | ✓ | ✗ | ✗ | ✗ |
+| Dump → batch JSON ラウンドトリップ | ✓ | ✗ | ✗ | ✗ |
+| ライブプレビュー (編集後自動更新) | ✓ | ✗ | ✗ | ✗ |
 | ヘッドレス / CI | ✓ | ✗ | 部分対応 | ✓ |
 | クロスプラットフォーム | ✓ | Windows/Mac | ✓ | ✓ |
 | Word + Excel + PowerPoint | ✓ | ✓ | ✓ | 複数ライブラリが必要 |
-
-## 更新と設定
-
-```bash
-officecli config autoUpdate false              # 自動更新チェックを無効化
-OFFICECLI_SKIP_UPDATE=1 officecli ...          # 単回のチェックをスキップ（CI 向け）
-```
 
 ## コマンドリファレンス
 
@@ -507,21 +529,6 @@ officecli view report.pptx issues --json
 officecli set report.pptx '/slide[1]/shape[1]' --prop font=Arial
 ```
 
-### テンプレートマージ
-
-ドキュメント内の `{{key}}` プレースホルダーを JSON データで置換 -- 段落、表セル、図形、ヘッダー、フッター、チャートタイトルなど全テキストコンテンツに対応。
-
-```bash
-# インライン JSON データ
-officecli merge template.docx output.docx '{"name":"Alice","dept":"Sales","date":"2026-03-30"}'
-
-# JSON ファイルから読み込み
-officecli merge template.pptx report.pptx data.json
-
-# Excel テンプレート
-officecli merge budget-template.xlsx q4-budget.xlsx '{"quarter":"Q4","year":"2026"}'
-```
-
 ### 単位と色
 
 すべての寸法・色プロパティは柔軟な入力形式に対応：
@@ -554,6 +561,20 @@ officecli merge invoice-template.docx invoice-001.docx '{"client":"Acme","total"
 
 # 納品前にドキュメント品質をチェック
 officecli validate report.docx && officecli view report.docx issues --json
+```
+
+**Python から呼び出し** — 一度ラップすれば、すべての呼び出しでパース済み JSON が返ります：
+
+```python
+import json, subprocess
+
+def cli(*args):
+    return json.loads(subprocess.check_output(["officecli", *args, "--json"], text=True))
+
+cli("create", "deck.pptx")
+cli("add", "deck.pptx", "/", "--type", "slide", "--prop", "title=Q4 レポート")
+slide = cli("get", "deck.pptx", "/slide[1]")
+print(slide["attributes"]["text"])
 ```
 
 ## ドキュメント

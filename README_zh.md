@@ -1,10 +1,12 @@
 # OfficeCLI
 
-> **OfficeCLI 是全球首个、也是最好的专为 AI 智能体设计的命令行工具。**
+> **OfficeCLI 是全球首个、也是最好的专为 AI 智能体设计的 Office 套件。**
 
-**让任何 AI 智能体完全掌控 Word、Excel 和 PowerPoint -- 只需一行代码。**
+**让任何 AI 智能体完全掌控 Word、Excel 和 PowerPoint——只需一行代码。**
 
 开源免费。单一可执行文件。无需安装 Office。零依赖。全平台运行。
+
+**内置 agent 友好渲染引擎** —— 智能体可以"看见"自己创建的内容，无需 Office。把 `.docx` / `.xlsx` / `.pptx` 渲染为 HTML 或 PNG，"渲染 → 看 → 改" 循环在二进制能跑的任何地方都成立。
 
 [![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -66,8 +68,6 @@ curl -fsSL https://officecli.ai/SKILL.md
 
 就这一步。技能文件会教智能体如何安装二进制文件并使用所有命令。
 
-> **技术细节：** OfficeCLI 附带 [SKILL.md](SKILL.md)，涵盖命令语法、架构设计和常见陷阱。安装后，您的智能体可以立即创建、读取和修改任何 Office 文档。
-
 ## 普通用户
 
 **方式 A — 图形界面：** 安装 [**AionUi**](https://github.com/iOfficeAI/AionUi) — 一款桌面应用，用自然语言就能创建和编辑 Office 文档，底层由 OfficeCLI 驱动。只需描述你想要什么，AionUi 帮你搞定。
@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh
 officecli create deck.pptx
 
 # 3. 启动实时预览 — 浏览器自动打开 http://localhost:26315
-officecli watch deck.pptx --port 26315
+officecli watch deck.pptx
 
 # 4. 打开另一个终端，添加一页幻灯片 — 浏览器即时刷新
 officecli add deck.pptx / --type slide --prop title="Hello, World!"
@@ -230,16 +230,56 @@ OfficeCLI 会在后台自动检查更新。通过 `officecli config autoUpdate f
 
 ## 核心功能
 
-### 实时预览
+### 内置引擎与生成原语
 
-`watch` 启动本地 HTTP 服务器，实时预览 PowerPoint 文件。每次修改自动刷新浏览器 — 非常适合与 AI 智能体配合做迭代设计。
+OfficeCLI 是自包含的。下列能力全部内置在二进制中——**无需 Office**。
+
+#### 渲染引擎
+
+从零实现的 agent 友好渲染引擎内置在二进制中，覆盖形状、图表（趋势线、误差线、瀑布、K 线、sparkline）、公式（OMML → MathJax 兼容）、通过 Three.js 渲染的 3D `.glb` 模型、morph 过渡、幻灯片缩放、形状效果。按页 PNG 截图是把渲染出的 HTML 通过无头浏览器截出来的。三种模式：
+
+- **`view html`** —— 独立 HTML 文件，资源内联。任何浏览器打开即可看。
+- **`view screenshot`** —— 按页 PNG，供多模态智能体读图检查。
+- **`watch`** —— 本地 HTTP 服务 + 自动刷新预览；每次 `add` / `set` / `remove` 立即更新浏览器。Excel watch 还支持单元格内联编辑、图表拖动定位。
 
 ```bash
-officecli watch deck.pptx
-# 打开 http://localhost:26315 — 每次 set/add/remove 自动刷新
+officecli view deck.pptx html -o /tmp/deck.html
+officecli view deck.pptx screenshot -o /tmp/deck.png # 多页用 --page 1-N
+officecli watch deck.pptx                            # http://localhost:26315
 ```
 
-支持形状、图表、公式、3D 模型（Three.js）、morph 过渡、缩放导航和所有形状效果的渲染。
+> 没有可视化，生成 PPT 的智能体就是在盲跑——它能读 DOM，但分辨不出标题溢出、两个形状重叠。因为渲染引擎内置在二进制里，"渲染 → 看 → 改"循环在 CI、Docker、无显示器的服务器——只要二进制能跑的地方都能用。
+
+#### 公式与透视引擎
+
+150+ Excel 函数写入即自动求值——写 `=SUM(A1:A2)`，`get` 单元格，值已经在那。不需要回到 Office 重算。覆盖动态数组函数（`FILTER` / `UNIQUE` / `SORT` / `SEQUENCE`，`_xlfn.` 自动加前缀）、`VLOOKUP` / `INDEX` / `MATCH`、日期与文本函数等。
+
+外加从源数据范围一条命令生成原生 OOXML 数据透视表——多字段行/列/筛选器、10 种聚合方式、`showDataAs` 多种模式、日期分组、计算字段、Top-N、布局选项。透视表缓存和定义都写入 OOXML，Excel 打开即看到聚合后的结果：
+
+```bash
+officecli add sales.xlsx '/Sheet1' --type pivottable \
+  --prop source='Data!A1:E10000' --prop rows='Region,Category' \
+  --prop cols=Quarter --prop values='Revenue:sum,Units:avg' \
+  --prop showDataAs=percentOfTotal
+```
+
+#### 模板合并 —— 设计一次，填充 N 次
+
+`merge` 把任意 `.docx` / `.xlsx` / `.pptx` 中的 `{{key}}` 占位符替换为 JSON 数据——段落、表格单元格、形状、页眉页脚、图表标题都支持。智能体一次性设计版式（昂贵），生产代码填充 N 次（廉价、确定、零 token 成本）。避免了"每份报告都从头重生成、产出 N 份版式不一致"的失败模式。
+
+```bash
+officecli merge invoice-template.docx out-001.docx '{"client":"Acme","total":"$5,200"}'
+officecli merge q4-template.pptx q4-acme.pptx data.json
+```
+
+#### Dump 往返 —— 从现有文档学习
+
+`dump` 把任意 `.docx` 序列化为可重放的 batch JSON，`batch` 重放回去。给一份用户想模仿的范本，智能体读结构化规格——段落、样式、表格形状——而不是原始 OOXML XML，修改后重放。打通"我有一份现成模板"和"给我生成 100 份变体"之间的链路。
+
+```bash
+officecli dump existing.docx -o blueprint.json
+officecli batch new.docx --input blueprint.json
+```
 
 ### 驻留模式与批量执行
 
@@ -270,7 +310,7 @@ officecli batch deck.pptx --input updates.json --force --json
 
 | 层 | 用途 | 命令 |
 |----|------|------|
-| **L1：读取** | 内容的语义视图 | `view`（text、annotated、outline、stats、issues、html） |
+| **L1：读取** | 内容的语义视图 | `view`（text、annotated、outline、stats、issues、html、svg、screenshot） |
 | **L2：DOM** | 结构化元素操作 | `get`、`query`、`set`、`add`、`remove`、`move`、`swap` |
 | **L3：原始 XML** | XPath 直接访问 — 通用兜底 | `raw`、`raw-set`、`add-part`、`validate` |
 
@@ -335,33 +375,18 @@ curl -fsSL https://officecli.ai/SKILL.md -o ~/.claude/skills/officecli.md
 
 </details>
 
-**从任意语言调用：**
+### 智能体为什么在 OfficeCLI 上如鱼得水
 
-```python
-# Python
-import subprocess, json
-def cli(*args): return subprocess.check_output(["officecli", *args], text=True)
-cli("create", "deck.pptx")
-cli("set", "deck.pptx", "/slide[1]/shape[1]", "--prop", "text=Hello")
-```
-
-```js
-// JavaScript
-const { execFileSync } = require('child_process')
-const cli = (...args) => execFileSync('officecli', args, { encoding: 'utf8' })
-cli('set', 'deck.pptx', '/slide[1]/shape[1]', '--prop', 'text=Hello')
-```
-
-每个命令都支持 `--json` 输出结构化数据。基于路径的寻址让智能体无需理解 XML 命名空间。
-
-### 为什么智能体偏爱 OfficeCLI
-
-- **确定性 JSON 输出** -- 每个命令都支持 `--json`，返回结构一致的数据。无需正则解析。
-- **基于路径的寻址** -- 每个元素都有稳定的路径（`/slide[1]/shape[2]`）。智能体无需理解 XML 命名空间即可导航文档。注意：路径使用 OfficeCLI 自有语法（1-based 索引，元素本地名称），非 XPath。
-- **渐进式复杂度** -- 从 L1（读取）开始，升级到 L2（修改），仅在必要时回退到 L3（原始 XML）。最大限度减少 token 消耗。
-- **自愈式工作流** -- `validate`、`view issues` 和帮助系统让智能体无需人工干预即可检测问题并自行修正。
-- **内置帮助** -- 属性名或取值格式不确定时，运行 `officecli <format> set <element>` 即可查询，无需猜测。
-- **自动安装** -- 无需手动配置技能文件。OfficeCLI 自动检测您的 AI 工具并完成配置。
+- **确定性 JSON 输出** —— 每条命令都支持 `--json`，schema 一致。无需正则解析、无需抓 stdout。
+- **基于路径的寻址** —— 每个元素都有稳定路径（`/slide[1]/shape[2]`）。智能体无需理解 XML 命名空间即可导航文档。（OfficeCLI 自己的语法：1-based 索引、元素本地名——不是 XPath。）
+- **渐进式复杂度（L1 → L2 → L3）** —— 智能体从只读视图入手，升级到 DOM 操作，仅在必要时降到 raw XML。最大限度节省 token。
+- **自愈式工作流** —— `validate`、`view issues`、以及结构化错误码（`not_found`、`invalid_value`、`unsupported_property`）会返回 suggestion 和有效范围。智能体无需人工介入即可自纠错。
+- **内置 agent 友好渲染引擎** —— `view html` / `view screenshot` / `watch` 原生输出 HTML 和 PNG。无需 Office。智能体能"看见"自己的产出，并在 CI / Docker / 无头环境里修复排版问题。
+- **内置公式与透视引擎** —— 150+ Excel 函数写入即自动求值；从源数据范围一条命令生成原生 OOXML 数据透视表。智能体立刻读到计算值和聚合结果，不需要回到 Office 重算。
+- **模板合并** —— 智能体一次性设计版式，下游代码把 `{{key}}` 占位符填充 N 次。避免每份报告都烧 token 重生成。
+- **Dump 往返** —— `dump` 把任意 `.docx` 转成可重放的 batch JSON。智能体通过读结构化规格学习人类范本，而不是从原始 OOXML XML 反推。
+- **内置帮助** —— 属性名或取值格式不确定时，智能体跑 `officecli <format> set <element>`，不靠猜。
+- **自动安装** —— OfficeCLI 自动识别您的 AI 工具（Claude Code、Cursor、VS Code…）并完成配置。无需手动放 skill 文件。
 
 ### 内置帮助
 
@@ -442,17 +467,14 @@ officecli get report.docx /body --depth 1 --json
 | 任意语言调用 | ✓ (CLI) | ✗ (COM/Add-in) | ✗ (UNO API) | 仅 Python |
 | 基于路径的元素访问 | ✓ | ✗ | ✗ | ✗ |
 | 原始 XML 兜底 | ✓ | ✗ | ✗ | 部分支持 |
-| 实时预览 | ✓ | ✓ | ✗ | ✗ |
+| 内置 agent 友好渲染引擎 | ✓ | ✗ | ✗ | ✗ |
+| 无头 HTML/PNG 输出 | ✓ | ✗ | 部分支持 | ✗ |
+| 跨格式模板合并（`{{key}}`）| ✓ | ✗ | ✗ | ✗ |
+| Dump → batch JSON 往返 | ✓ | ✗ | ✗ | ✗ |
+| 实时预览（编辑后自动刷新） | ✓ | ✗ | ✗ | ✗ |
 | 无头 / CI 环境 | ✓ | ✗ | 部分支持 | ✓ |
 | 跨平台 | ✓ | Windows/Mac | ✓ | ✓ |
 | Word + Excel + PowerPoint | ✓ | ✓ | ✓ | 需要多个库 |
-
-## 更新与配置
-
-```bash
-officecli config autoUpdate false              # 关闭自动更新检查
-OFFICECLI_SKIP_UPDATE=1 officecli ...          # 单次调用跳过检查（CI）
-```
 
 ## 命令参考
 
@@ -507,21 +529,6 @@ officecli view report.pptx issues --json
 officecli set report.pptx '/slide[1]/shape[1]' --prop font=Arial
 ```
 
-### 模板合并
-
-用 JSON 数据替换文档中的 `{{key}}` 占位符 -- 支持段落、表格单元格、形状、页眉页脚、图表标题等所有文本内容。
-
-```bash
-# 内联 JSON 数据
-officecli merge template.docx output.docx '{"name":"Alice","dept":"Sales","date":"2026-03-30"}'
-
-# 从 JSON 文件读取数据
-officecli merge template.pptx report.pptx data.json
-
-# Excel 模板
-officecli merge budget-template.xlsx q4-budget.xlsx '{"quarter":"Q4","year":"2026"}'
-```
-
 ### 单位与颜色
 
 所有尺寸和颜色属性均接受灵活的输入格式：
@@ -554,6 +561,20 @@ officecli merge invoice-template.docx invoice-001.docx '{"client":"Acme","total"
 
 # 交付前检查文档质量
 officecli validate report.docx && officecli view report.docx issues --json
+```
+
+**Python 调用** —— 包装一次，每次调用都返回解析好的 JSON：
+
+```python
+import json, subprocess
+
+def cli(*args):
+    return json.loads(subprocess.check_output(["officecli", *args, "--json"], text=True))
+
+cli("create", "deck.pptx")
+cli("add", "deck.pptx", "/", "--type", "slide", "--prop", "title=Q4 报告")
+slide = cli("get", "deck.pptx", "/slide[1]")
+print(slide["attributes"]["text"])
 ```
 
 ## 文档
