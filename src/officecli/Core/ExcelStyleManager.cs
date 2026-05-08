@@ -213,6 +213,10 @@ internal class ExcelStyleManager
             alignProps["wraptext"] = wrapVal2;
         if (styleProps.TryGetValue("halign", out var halignVal))
             alignProps["horizontal"] = halignVal;
+        // CONSISTENCY(align-alias): mirror pptx/docx which both accept
+        // `align=` as the canonical short form for horizontal alignment.
+        if (styleProps.TryGetValue("align", out var alignVal))
+            alignProps["horizontal"] = alignVal;
         if (styleProps.TryGetValue("valign", out var valignVal))
             alignProps["vertical"] = valignVal;
         if (styleProps.TryGetValue("rotation", out var rotVal))
@@ -524,7 +528,7 @@ internal class ExcelStyleManager
         return lower is "numfmt" or "fill" or "bgcolor" or "font" or "border"
             or "bold" or "italic" or "strike" or "strikethrough" or "underline"
             or "superscript" or "subscript" or "size"
-            or "wrap" or "wraptext" or "numberformat" or "format" or "halign" or "valign"
+            or "wrap" or "wraptext" or "numberformat" or "format" or "halign" or "align" or "valign"
             or "rotation" or "indent" or "shrinktofit"
             or "locked" or "formulahidden"
             || lower == "readingorder"
