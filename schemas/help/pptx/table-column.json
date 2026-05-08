@@ -2,6 +2,7 @@
   "$schema": "../_schema.json",
   "format": "pptx",
   "element": "column",
+  "elementAliases": ["col"],
   "parent": "table",
   "operations": {
     "add": true,
