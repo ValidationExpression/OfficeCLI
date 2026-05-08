@@ -2080,6 +2080,16 @@ public partial class PowerPointHandler
         bool isAfter,
         Dictionary<string, string> properties)
     {
+        // find: anchor is only valid for inline types (run/text). Block-level types
+        // like shape, row, col, table cannot be inserted at a text-find position —
+        // reject early with a clear error instead of silently doing the wrong thing
+        // (e.g. inserting a run into a cell paragraph when type=row was requested).
+        var normalizedType = type.ToLowerInvariant();
+        if (normalizedType is not ("run" or "text"))
+            throw new ArgumentException(
+                $"find: anchor is not supported for type '{type}'. " +
+                $"Use a positional anchor (--before /slide[N]/table[K]/tr[R] or --index N) instead.");
+
         // Resolve paragraphs from parent path
         var paragraphs = ResolvePptParagraphsForFind(parentPath);
         if (paragraphs.Count == 0)
