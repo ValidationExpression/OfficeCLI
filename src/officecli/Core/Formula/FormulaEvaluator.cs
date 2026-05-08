@@ -747,7 +747,11 @@ internal partial class FormulaEvaluator
                     ? ResolveSheetCellResult($"{sheetPrefix}!{cellRef}")
                     : ResolveCellResult(cellRef);
             }
-        return new RangeData(cells);
+        // R3-1: preserve the range's origin so ROW() / COLUMN() / ADDRESS() can
+        // answer correctly when given a literal range token (`A1:B3`) — the
+        // tokenizer routes those through Expand2DRange, bypassing ResolveRef
+        // where Round 2 introduced BaseRow/BaseCol propagation.
+        return new RangeData(cells) { BaseRow = r1, BaseCol = cMin };
     }
 
     private static (string col, int row) ParseRef(string r)
