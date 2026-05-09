@@ -115,6 +115,7 @@ public partial class PowerPointHandler : IDocumentHandler
 
     public void RawSet(string partPath, string xpath, string action, string? xml)
     {
+        if (partPath == null) throw new ArgumentNullException(nameof(partPath));
         var presentationPart = _doc.PresentationPart
             ?? throw new InvalidOperationException("No presentation part");
 

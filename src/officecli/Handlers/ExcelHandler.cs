@@ -232,6 +232,7 @@ public partial class ExcelHandler : IDocumentHandler
 
     public void RawSet(string partPath, string xpath, string action, string? xml)
     {
+        if (partPath == null) throw new ArgumentNullException(nameof(partPath));
         var workbookPart = _doc.WorkbookPart
             ?? throw new InvalidOperationException("No workbook part");
 
