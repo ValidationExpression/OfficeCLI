@@ -651,7 +651,13 @@ internal partial class FormulaEvaluator
                 catch { /* fall through to cached value */ }
             }
 
-            var cached = cell.CellValue?.Text;
+            // InlineString cells store their text in <is><t>…</t></is>, NOT in
+            // <v>. Reading CellValue?.Text returns null and the inline content
+            // would silently degrade to 0 in any reference. Pull from
+            // cell.InlineString.InnerText first when DataType says inlineStr.
+            var cached = cell.DataType?.Value == CellValues.InlineString
+                ? cell.InlineString?.InnerText
+                : cell.CellValue?.Text;
             if (!string.IsNullOrEmpty(cached))
             {
                 if (cell.DataType?.Value == CellValues.SharedString)
