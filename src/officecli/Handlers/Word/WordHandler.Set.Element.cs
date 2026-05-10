@@ -1149,7 +1149,26 @@ public partial class WordHandler
         var unsupported = new List<string>();
         var tcPr = cell.TableCellProperties ?? cell.PrependChild(new TableCellProperties());
         string? deferredText = null;
-        foreach (var (key, value) in properties)
+
+        // BUG-R2-P0-3: gridSpan/colspan must be processed before width because
+        // the width case reads tcPr.GridSpan to know how to distribute the new
+        // width across the spanned grid cols. If the dict iteration order put
+        // width first, gridSpan was still 1 and the merged width was stamped
+        // into a single gridCol — corrupting the tblGrid. Pre-sort so gridspan
+        // and aliases ("colspan") run before width.
+        // CONSISTENCY(set-prop-order): width depends on gridspan; pre-sort.
+        var orderedProperties = properties
+            .OrderBy(kv =>
+            {
+                var k = kv.Key.ToLowerInvariant();
+                if (k is "gridspan" or "colspan") return 0;
+                if (k is "hmerge") return 0; // hmerge also resolves to gridSpan
+                if (k is "width") return 1;
+                return 2;
+            })
+            .ToList();
+
+        foreach (var (key, value) in orderedProperties)
         {
             switch (key.ToLowerInvariant())
             {
