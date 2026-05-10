@@ -1729,6 +1729,39 @@ public partial class WordHandler
                     cm.TableCellRightMargin = new TableCellRightMargin { Width = (short)Math.Min(paddingVal, short.MaxValue), Type = TableWidthValues.Dxa };
                     break;
                 }
+                case "shd" or "shading" or "fill":
+                {
+                    // BUG-R2-P3-10: table-level shd was falling through to
+                    // GenericXmlQuery.TryCreateTypedChild which stamped the
+                    // raw color into w:val instead of w:fill. Mirror the cell
+                    // path's parser: 1-segment = bare color (val=clear, fill=COLOR);
+                    // 2+ segments = VAL;FILL[;COLOR]. CONSISTENCY(set-shd-parser).
+                    var shdParts = value.Split(';');
+                    var tShd = new Shading();
+                    if (shdParts.Length == 1)
+                    {
+                        tShd.Val = ShadingPatternValues.Clear;
+                        tShd.Fill = OfficeCli.Core.ParseHelpers.SanitizeColorForOoxml(shdParts[0]).Rgb;
+                    }
+                    else
+                    {
+                        var pat = shdParts[0].TrimStart('#');
+                        if (pat.Length >= 6 && pat.All(char.IsAsciiHexDigit))
+                        {
+                            tShd.Val = ShadingPatternValues.Clear;
+                            tShd.Fill = OfficeCli.Core.ParseHelpers.SanitizeColorForOoxml(shdParts[0]).Rgb;
+                        }
+                        else
+                        {
+                            tShd.Val = new ShadingPatternValues(shdParts[0]);
+                            tShd.Fill = OfficeCli.Core.ParseHelpers.SanitizeColorForOoxml(shdParts[1]).Rgb;
+                            if (shdParts.Length >= 3)
+                                tShd.Color = OfficeCli.Core.ParseHelpers.SanitizeColorForOoxml(shdParts[2]).Rgb;
+                        }
+                    }
+                    tblPr.Shading = tShd;
+                    break;
+                }
                 case "firstrow":
                 case "lastrow":
                 case "firstcol" or "firstcolumn":

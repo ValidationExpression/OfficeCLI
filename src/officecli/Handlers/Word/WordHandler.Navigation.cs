@@ -3176,20 +3176,19 @@ public partial class WordHandler
                 var shd = tcPr.Shading;
                 if (shd != null)
                 {
-                    // BUG-DUMP21-02: emit shading.val/.fill/.color sub-keys
-                    // (mirrors paragraph/table shading pattern) so cell
-                    // pattern + foreground color survive dump→batch
-                    // round-trip via BatchEmitter's shading-fold. Keep the
-                    // legacy `fill` alias for backward-compat with tests
-                    // that read cell background as Format["fill"].
+                    // BUG-DUMP21-02 / BUG-R2-P3-11: emit only the canonical
+                    // shading.val/.fill/.color sub-keys. Previously also
+                    // emitted a legacy `fill` alias carrying the same value,
+                    // which violated the root CLAUDE.md "one canonical key per
+                    // semantic value" rule and showed up as duplicate output
+                    // for every shaded cell. shading.fill is the canonical key
+                    // (matches the OOXML attribute name).
                     var cShdVal = shd.Val?.InnerText;
                     var cShdFill = shd.Fill?.Value;
                     var cShdColor = shd.Color?.Value;
                     if (!string.IsNullOrEmpty(cShdVal)) node.Format["shading.val"] = cShdVal;
                     if (!string.IsNullOrEmpty(cShdFill)) node.Format["shading.fill"] = ParseHelpers.FormatHexColor(cShdFill);
                     if (!string.IsNullOrEmpty(cShdColor)) node.Format["shading.color"] = ParseHelpers.FormatHexColor(cShdColor);
-                    if (!string.IsNullOrEmpty(cShdFill))
-                        node.Format["fill"] = ParseHelpers.FormatHexColor(cShdFill);
                 }
             }
             // Width
