@@ -63,7 +63,15 @@ internal static class SpacingConverter
         var points = ParseSpacingToPoints(value, bareIsPoints: true);
         if (points < 0)
             throw new ArgumentException($"Invalid spacing value '{value}'. Spacing must be non-negative.");
-        return (int)Math.Round(points * 100);
+        // BUG-R7-03: PPT stores spaceBefore/spaceAfter in hundredths of a point
+        // as a 32-bit signed integer (CT_TextSpacing). Compute in 64-bit and
+        // reject values that would silently overflow on cast — the symptom was
+        // 999999999pt clamping to int.MaxValue/100 ≈ 21474836.47pt readback.
+        var hundredths = (long)Math.Round(points * 100);
+        if (hundredths > int.MaxValue)
+            throw new ArgumentException(
+                $"Invalid spacing value '{value}'. Value too large — exceeds maximum representable spacing (~{int.MaxValue / 100.0}pt).");
+        return (int)hundredths;
     }
 
     /// <summary>
@@ -94,38 +102,48 @@ internal static class SpacingConverter
     {
         var trimmed = value.Trim();
 
+        // BUG-R7-04: lineSpacing must be strictly > 0. Zero produces degenerate
+        // OOXML (w:spacing/@line=0 is undefined in MS-DOC) and Office silently
+        // collapses to single-spacing — surface the error to the user instead.
+        static double RequirePositive(double n, string raw)
+        {
+            if (n <= 0)
+                throw new ArgumentException($"Invalid 'lineSpacing' value '{raw}'. Line spacing must be greater than 0.");
+            return n;
+        }
+
         // "1.5x" → multiplier
         if (trimmed.EndsWith("x", StringComparison.OrdinalIgnoreCase))
         {
-            var num = ParseNumber(trimmed[..^1], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^1], "lineSpacing"), value);
             return ((uint)Math.Round(num * WordAutoLineSpacingUnit), true);
         }
 
         // "150%" → multiplier
         if (trimmed.EndsWith("%", StringComparison.Ordinal))
         {
-            var num = ParseNumber(trimmed[..^1], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^1], "lineSpacing"), value);
             return ((uint)Math.Round(num / 100.0 * WordAutoLineSpacingUnit), true);
         }
 
         // "18pt" → fixed (Exact)
         if (trimmed.EndsWith("pt", StringComparison.OrdinalIgnoreCase))
         {
-            var num = ParseNumber(trimmed[..^2], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^2], "lineSpacing"), value);
             return ((uint)Math.Round(num * TwipsPerPoint), false);
         }
 
         // "0.5cm" → fixed (Exact), convert to points first
         if (trimmed.EndsWith("cm", StringComparison.OrdinalIgnoreCase))
         {
-            var num = ParseNumber(trimmed[..^2], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^2], "lineSpacing"), value);
             return ((uint)Math.Round(num * PointsPerCm * TwipsPerPoint), false);
         }
 
         // "0.5in" → fixed (Exact)
         if (trimmed.EndsWith("in", StringComparison.OrdinalIgnoreCase))
         {
-            var num = ParseNumber(trimmed[..^2], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^2], "lineSpacing"), value);
             return ((uint)Math.Round(num * PointsPerInch * TwipsPerPoint), false);
         }
 
@@ -134,9 +152,7 @@ internal static class SpacingConverter
         // 1.5 = 360, 2.0 = 480). Earlier this returned the raw value as twips
         // (`Math.Round(1.5) = 2 twips`), which Word silently treated as a
         // single-spaced line because 2 twips is below any visible threshold.
-        var bare = ParseNumber(trimmed, "lineSpacing");
-        if (bare < 0)
-            throw new ArgumentException($"Invalid 'lineSpacing' value '{value}'. Line spacing must be non-negative.");
+        var bare = RequirePositive(ParseNumber(trimmed, "lineSpacing"), value);
         return ((uint)Math.Round(bare * WordAutoLineSpacingUnit), true);
     }
 
@@ -155,45 +171,53 @@ internal static class SpacingConverter
     {
         var trimmed = value.Trim();
 
+        // BUG-R7-04: lineSpacing must be strictly > 0. SpacingPercent(0) is
+        // degenerate — Office silently renders single-line spacing without
+        // any error, masking the user's mistake.
+        static double RequirePositive(double n, string raw)
+        {
+            if (n <= 0)
+                throw new ArgumentException($"Invalid 'lineSpacing' value '{raw}'. Line spacing must be greater than 0.");
+            return n;
+        }
+
         // "1.5x" → multiplier → SpacingPercent
         if (trimmed.EndsWith("x", StringComparison.OrdinalIgnoreCase))
         {
-            var num = ParseNumber(trimmed[..^1], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^1], "lineSpacing"), value);
             return ((int)Math.Round(num * 100000), true);
         }
 
         // "150%" → multiplier → SpacingPercent
         if (trimmed.EndsWith("%", StringComparison.Ordinal))
         {
-            var num = ParseNumber(trimmed[..^1], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^1], "lineSpacing"), value);
             return ((int)Math.Round(num * 1000), true);
         }
 
         // "18pt" → fixed → SpacingPoints
         if (trimmed.EndsWith("pt", StringComparison.OrdinalIgnoreCase))
         {
-            var num = ParseNumber(trimmed[..^2], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^2], "lineSpacing"), value);
             return ((int)Math.Round(num * 100), false);
         }
 
         // "0.5cm" → fixed → SpacingPoints
         if (trimmed.EndsWith("cm", StringComparison.OrdinalIgnoreCase))
         {
-            var num = ParseNumber(trimmed[..^2], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^2], "lineSpacing"), value);
             return ((int)Math.Round(num * PointsPerCm * 100), false);
         }
 
         // "0.5in" → fixed → SpacingPoints
         if (trimmed.EndsWith("in", StringComparison.OrdinalIgnoreCase))
         {
-            var num = ParseNumber(trimmed[..^2], "lineSpacing");
+            var num = RequirePositive(ParseNumber(trimmed[..^2], "lineSpacing"), value);
             return ((int)Math.Round(num * PointsPerInch * 100), false);
         }
 
         // Bare number → backward compat: multiplier → SpacingPercent
-        var bare = ParseNumber(trimmed, "lineSpacing");
-        if (bare < 0)
-            throw new ArgumentException($"Invalid 'lineSpacing' value '{value}'. Line spacing must be non-negative.");
+        var bare = RequirePositive(ParseNumber(trimmed, "lineSpacing"), value);
         return ((int)Math.Round(bare * 100000), true);
     }
 
