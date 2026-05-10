@@ -320,12 +320,14 @@ public partial class ExcelHandler
                     // style didn't apply. Reject up-front with a clear
                     // message, same vocabulary as Add (see Helpers.cs
                     // ValidateTableStyleName).
-                    ValidateTableStyleName(value);
+                    // BUG-R9-B2: accept short aliases (medium2, light1, dark1, none).
+                    var normalizedStyle = NormalizeTableStyleName(value) ?? value;
+                    ValidateTableStyleName(normalizedStyle);
                     var styleInfo = table.GetFirstChild<TableStyleInfo>();
-                    if (styleInfo != null) styleInfo.Name = value;
+                    if (styleInfo != null) styleInfo.Name = normalizedStyle;
                     else table.AppendChild(new TableStyleInfo
                     {
-                        Name = value, ShowFirstColumn = false, ShowLastColumn = false,
+                        Name = normalizedStyle, ShowFirstColumn = false, ShowLastColumn = false,
                         ShowRowStripes = true, ShowColumnStripes = false
                     });
                     break;

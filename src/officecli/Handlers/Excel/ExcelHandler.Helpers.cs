@@ -806,6 +806,32 @@ public partial class ExcelHandler
         return set;
     }
 
+    // BUG-R9-B2: schema (_shared/table.json) documents short-name styles
+    // (medium1..medium28, light1..light28, dark1..dark28, none) as valid
+    // values, but the validator only accepted the full OOXML "TableStyleX"
+    // form. Mirror pptx ResolveTableStyleId behavior: accept short aliases
+    // and map to the canonical full name. "none" maps to "TableStyleNone".
+    // CONSISTENCY(table-style-naming): xlsx + pptx now both accept
+    // medium1/light1/dark1/none short names.
+    internal static string? NormalizeTableStyleName(string? styleName)
+    {
+        if (string.IsNullOrEmpty(styleName)) return styleName;
+        var trimmed = styleName.Trim();
+        if (string.Equals(trimmed, "none", StringComparison.OrdinalIgnoreCase))
+            return "TableStyleNone";
+        // Match short aliases like "medium2", "light1", "dark3" (1..28).
+        var m = System.Text.RegularExpressions.Regex.Match(
+            trimmed, @"^(light|medium|dark)(\d{1,2})$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (m.Success && int.TryParse(m.Groups[2].Value, out var n) && n >= 1 && n <= 28)
+        {
+            var tier = char.ToUpperInvariant(m.Groups[1].Value[0]) +
+                       m.Groups[1].Value.Substring(1).ToLowerInvariant();
+            return $"TableStyle{tier}{n}";
+        }
+        return styleName;
+    }
+
     internal void ValidateTableStyleName(string? styleName)
     {
         if (string.IsNullOrEmpty(styleName)) return;

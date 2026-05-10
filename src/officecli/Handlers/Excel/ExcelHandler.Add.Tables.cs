@@ -700,6 +700,9 @@ public partial class ExcelHandler
                     $"Table displayName '{displayName}' already exists in workbook; choose a different displayName.");
         }
         var styleName = properties.GetValueOrDefault("style", "TableStyleMedium2");
+        // BUG-R9-B2: accept short aliases (medium2, light1, dark1, none) — schema
+        // documents these but ValidateTableStyleName only accepted full names.
+        styleName = NormalizeTableStyleName(styleName) ?? styleName;
         // T6 — validate style name against the built-in whitelist +
         // any workbook-level customStyles. Unknown names silently
         // fell through to Excel which would either ignore or
