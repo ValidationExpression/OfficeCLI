@@ -1304,13 +1304,33 @@ public partial class WordHandler
                             Type = TableWidthUnitValues.Pct
                         };
                     }
+                    else if (string.Equals(value, "auto", StringComparison.OrdinalIgnoreCase))
+                    {
+                        tcPr.TableCellWidth = new TableCellWidth { Width = "0", Type = TableWidthUnitValues.Auto };
+                    }
                     else
                     {
-                        // BUG-R1-02: zero-width cell is invalid OOXML; SafeParseUint
-                        // accepts 0 but that produces <w:tcW w:w="0"/> which corrupts
-                        // table layout. Reject explicitly with the same error vocabulary
-                        // used for negative widths.
-                        var widthVal = ParseHelpers.SafeParseUint(value, "width");
+                        // BUG-R4-05: accept unit-qualified widths (cm/in/pt/dxa) in
+                        // addition to bare twips. Mirrors the cross-handler width
+                        // contract (root CLAUDE.md). Strip a trailing "dxa" suffix
+                        // (the form Get now emits) so the bare-twips path still works.
+                        var rawWidth = value;
+                        long? parsedTwips = null;
+                        if (rawWidth.EndsWith("dxa", StringComparison.OrdinalIgnoreCase))
+                            rawWidth = rawWidth[..^3];
+                        else if (rawWidth.EndsWith("cm", StringComparison.OrdinalIgnoreCase)
+                                 || rawWidth.EndsWith("in", StringComparison.OrdinalIgnoreCase)
+                                 || rawWidth.EndsWith("pt", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Reuse SpacingConverter — for Word it returns twips.
+                            try { parsedTwips = OfficeCli.Core.SpacingConverter.ParseWordSpacing(value); }
+                            catch { parsedTwips = null; }
+                        }
+                        long widthVal;
+                        if (parsedTwips.HasValue)
+                            widthVal = parsedTwips.Value;
+                        else
+                            widthVal = ParseHelpers.SafeParseUint(rawWidth, "width");
                         if (widthVal == 0)
                             throw new ArgumentException($"Invalid 'width' value: '{value}'. Must be a positive integer (> 0); zero-width cells are invalid OOXML.");
                         tcPr.TableCellWidth = new TableCellWidth { Width = widthVal.ToString(), Type = TableWidthUnitValues.Dxa };
