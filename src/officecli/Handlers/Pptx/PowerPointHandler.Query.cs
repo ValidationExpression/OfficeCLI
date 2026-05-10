@@ -391,11 +391,13 @@ public partial class PowerPointHandler
                 Text = cellText
             };
 
-            // GridSpan / RowSpan
+            // BUG-R4-07: emit canonical 'colspan'/'rowspan' (matches docx),
+            // not OOXML-internal 'gridSpan'/'rowSpan'. Set still accepts the
+            // OOXML-internal aliases.
             if (cell.GridSpan?.HasValue == true && cell.GridSpan.Value > 1)
-                cellNode.Format["gridSpan"] = cell.GridSpan.Value;
+                cellNode.Format["colspan"] = cell.GridSpan.Value;
             if (cell.RowSpan?.HasValue == true && cell.RowSpan.Value > 1)
-                cellNode.Format["rowSpan"] = cell.RowSpan.Value;
+                cellNode.Format["rowspan"] = cell.RowSpan.Value;
             if (cell.HorizontalMerge?.HasValue == true && cell.HorizontalMerge.Value)
                 cellNode.Format["hmerge"] = true;
             if (cell.VerticalMerge?.HasValue == true && cell.VerticalMerge.Value)
@@ -446,6 +448,18 @@ public partial class PowerPointHandler
                     _ => tcPr.Anchor.InnerText
                 };
             }
+
+            // BUG-R4-D9: padding.* readback (Set already wrote LeftMargin/etc;
+            // Get was missing). Use FormatEmu to mirror cross-handler width/EMU
+            // value formatting (e.g. "0.13cm").
+            if (tcPr?.LeftMargin?.HasValue == true)
+                cellNode.Format["padding.left"] = FormatEmu(tcPr.LeftMargin.Value);
+            if (tcPr?.RightMargin?.HasValue == true)
+                cellNode.Format["padding.right"] = FormatEmu(tcPr.RightMargin.Value);
+            if (tcPr?.TopMargin?.HasValue == true)
+                cellNode.Format["padding.top"] = FormatEmu(tcPr.TopMargin.Value);
+            if (tcPr?.BottomMargin?.HasValue == true)
+                cellNode.Format["padding.bottom"] = FormatEmu(tcPr.BottomMargin.Value);
 
             // Alignment from first paragraph
             var cellFirstPara = cell.TextBody?.Elements<Drawing.Paragraph>().FirstOrDefault();

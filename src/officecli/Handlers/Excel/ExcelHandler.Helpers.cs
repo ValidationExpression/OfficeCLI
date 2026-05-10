@@ -2157,10 +2157,13 @@ public partial class ExcelHandler
             node.Format["style"] = styleInfo.Name.Value;
         if (styleInfo != null)
         {
-            if (styleInfo.ShowRowStripes is not null) node.Format["showRowStripes"] = styleInfo.ShowRowStripes.Value;
-            if (styleInfo.ShowColumnStripes is not null) node.Format["showColumnStripes"] = styleInfo.ShowColumnStripes.Value;
-            if (styleInfo.ShowFirstColumn is not null) node.Format["showFirstColumn"] = styleInfo.ShowFirstColumn.Value;
-            if (styleInfo.ShowLastColumn is not null) node.Format["showLastColumn"] = styleInfo.ShowLastColumn.Value;
+            // BUG-R4-03/04: cross-format canonical key alignment with docx/pptx.
+            // Get emits camelCase canonical (bandedRows/bandedCols/firstCol/lastCol).
+            // Set still accepts the OOXML-internal aliases (showRowStripes etc).
+            if (styleInfo.ShowRowStripes is not null) node.Format["bandedRows"] = styleInfo.ShowRowStripes.Value;
+            if (styleInfo.ShowColumnStripes is not null) node.Format["bandedCols"] = styleInfo.ShowColumnStripes.Value;
+            if (styleInfo.ShowFirstColumn is not null) node.Format["firstCol"] = styleInfo.ShowFirstColumn.Value;
+            if (styleInfo.ShowLastColumn is not null) node.Format["lastCol"] = styleInfo.ShowLastColumn.Value;
         }
 
         node.Format["headerRow"] = (tbl.HeaderRowCount?.Value ?? 1) != 0;

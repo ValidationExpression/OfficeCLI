@@ -974,10 +974,12 @@ public partial class ExcelHandler
         {
             Name = styleName,
             ShowFirstColumn = (properties.TryGetValue("showFirstColumn", out var sfc)
-                    || properties.TryGetValue("firstColumn", out sfc))
+                    || properties.TryGetValue("firstColumn", out sfc)
+                    || properties.TryGetValue("firstCol", out sfc))
                 ? IsTruthy(sfc) : false,
             ShowLastColumn = (properties.TryGetValue("showLastColumn", out var slc)
-                    || properties.TryGetValue("lastColumn", out slc))
+                    || properties.TryGetValue("lastColumn", out slc)
+                    || properties.TryGetValue("lastCol", out slc))
                 ? IsTruthy(slc) : false,
             // Accept showBandedRows / showRowStripes / bandedRows as aliases.
             // Set.Tables.cs already accepts the same set; mirror here.
