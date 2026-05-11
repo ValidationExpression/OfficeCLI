@@ -37,18 +37,22 @@ public static class IssueSubtypes
     };
 
     /// <summary>
-    /// Validate a user-supplied <c>--type</c> argument. Null and empty pass
-    /// through (no filter). Recognised buckets and subtypes (case-insensitive)
-    /// pass through. Anything else raises <see cref="CliException"/> with the
-    /// full valid list — turning silent typos into a clear failure on both
-    /// the CLI front-end and the resident-server fan-out.
+    /// Validate a user-supplied <c>--type</c> argument and return the
+    /// canonicalised form. Null, empty, and whitespace-only inputs are
+    /// normalised to null (treated as "no filter"). Surrounding whitespace
+    /// is trimmed so values copied from shells with extra spaces still
+    /// match. Recognised buckets and subtypes (case-insensitive) pass
+    /// through unchanged. Anything else raises <see cref="CliException"/>
+    /// with the full valid list — turning silent typos into a clear
+    /// failure on both the CLI front-end and the resident-server fan-out.
     /// </summary>
-    public static void Validate(string? issueType)
+    public static string? Validate(string? issueType)
     {
-        if (string.IsNullOrEmpty(issueType)) return;
-        var canonical = issueType.ToLowerInvariant();
-        foreach (var v in ValidBuckets) if (v == canonical) return;
-        foreach (var v in ValidSubtypes) if (v == canonical) return;
+        if (string.IsNullOrWhiteSpace(issueType)) return null;
+        var trimmed = issueType.Trim();
+        var canonical = trimmed.ToLowerInvariant();
+        foreach (var v in ValidBuckets) if (v == canonical) return trimmed;
+        foreach (var v in ValidSubtypes) if (v == canonical) return trimmed;
         var all = new string[ValidBuckets.Length + ValidSubtypes.Length];
         ValidBuckets.CopyTo(all, 0);
         ValidSubtypes.CopyTo(all, ValidBuckets.Length);

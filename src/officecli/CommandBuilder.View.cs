@@ -55,8 +55,7 @@ static partial class CommandBuilder
             var start = result.GetValue(startLineOpt);
             var end = result.GetValue(endLineOpt);
             var maxLines = result.GetValue(maxLinesOpt);
-            var issueType = result.GetValue(issueTypeOpt);
-            IssueSubtypes.Validate(issueType);
+            var issueType = IssueSubtypes.Validate(result.GetValue(issueTypeOpt));
             var limit = result.GetValue(limitOpt);
             var colsStr = result.GetValue(colsOpt);
             var pageFilter = result.GetValue(pageOpt);
