@@ -525,9 +525,50 @@ public partial class PowerPointHandler
                 }
             }
 
+            // Slide-level a:fld fields (slidenum, datetime1/2/3/..., footer, header)
+            // without a cached rendered text — same observability pattern as Word
+            // complex fields and xlsx unevaluated formulas. PowerPoint populates
+            // <a:t> inside <a:fld> when it renders the slide; a fresh authoring
+            // pass with no PPT open-and-save leaves the slot blank, and the
+            // slide silently shows nothing where the slide number / date should
+            // have been. Issue lets agents detect the gap before the file ships.
+            foreach (var fld in shapeTree.Descendants<Drawing.Field>())
+            {
+                if (limit.HasValue && issues.Count >= limit.Value) break;
+                var fldType = fld.Type?.Value ?? "";
+                if (!IsDynamicSlideFieldType(fldType)) continue;
+                var cachedText = string.Concat(fld.Elements<Drawing.Text>().Select(t => t.Text));
+                if (!string.IsNullOrEmpty(cachedText)) continue;
+                issues.Add(new DocumentIssue
+                {
+                    Id = $"U{++issueNum}",
+                    Type = IssueType.Content,
+                    Severity = IssueSeverity.Warning,
+                    Path = $"/slide[{slideNum}]",
+                    Message = "Slide field written but not evaluated (no cached text, PowerPoint has not rendered it)",
+                    Context = $"<a:fld type=\"{fldType}\">",
+                    Suggestion = "Open in PowerPoint once so <a:t> inside <a:fld> is populated."
+                });
+            }
+
             if (limit.HasValue && issues.Count >= limit.Value) break;
         }
 
         return issues;
+    }
+
+    /// <summary>
+    /// PowerPoint <a:fld type="..."> values that PowerPoint renders dynamically
+    /// (slide number, dates). User-input field types are interactive — their
+    /// blank state is normal, not an issue.
+    /// </summary>
+    private static bool IsDynamicSlideFieldType(string fldType)
+    {
+        if (string.IsNullOrEmpty(fldType)) return false;
+        // slidenum, datetime, datetime1..datetime13 are PPT's built-in dynamic
+        // fields per ECMA-376 §20.1.6.4 (ST_PlaceholderType + ST_TextFieldType).
+        if (fldType == "slidenum") return true;
+        if (fldType.StartsWith("datetime", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 }
