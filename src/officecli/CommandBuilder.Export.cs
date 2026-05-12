@@ -55,30 +55,55 @@ static partial class CommandBuilder
 
             outPath ??= Path.ChangeExtension(file.FullName, targetExt.TrimStart('.'));
 
-            var (exitCode, stderr) = RunExporter(plugin.ExecutablePath, file.FullName, outPath);
-            if (exitCode != 0)
-                throw new CliException(
-                    $"Exporter plugin '{plugin.Manifest.Name}' failed (exit {exitCode}): {Truncate(stderr, 500)}")
-                {
-                    Code = exitCode switch
+            // If a resident holds the file open, it has an exclusive lock and
+            // any exporter (Word interop, soffice, ...) will fail with "file
+            // in use". Ask the resident to flush+close before we snapshot.
+            // The resident can be reopened by the user afterwards if needed.
+            bool residentClosed = false;
+            if (ResidentClient.TryConnect(file.FullName, out _))
+            {
+                if (ResidentClient.SendCloseWithResponse(file.FullName, out _))
+                    residentClosed = true;
+            }
+
+            // Snapshot the source to a tmp path so the plugin can open it
+            // exclusively. Safe because exporters are read-only with respect
+            // to the source.
+            var pluginSource = SnapshotForExport(file.FullName);
+            try
+            {
+                var (exitCode, stderr) = RunExporter(plugin.ExecutablePath, pluginSource, outPath);
+                if (exitCode != 0)
+                    throw new CliException(
+                        $"Exporter plugin '{plugin.Manifest.Name}' failed (exit {exitCode}): {Truncate(stderr, 500)}")
                     {
-                        2 => "corrupt_input",
-                        3 => "unsupported_feature",
-                        4 => "license_expired",
-                        5 => "protocol_mismatch",
-                        _ => "plugin_failed",
-                    },
-                };
+                        Code = exitCode switch
+                        {
+                            2 => "corrupt_input",
+                            3 => "unsupported_feature",
+                            4 => "license_expired",
+                            5 => "protocol_mismatch",
+                            _ => "plugin_failed",
+                        },
+                    };
 
-            if (!File.Exists(outPath))
-                throw new CliException(
-                    $"Exporter plugin '{plugin.Manifest.Name}' reported success but no output file was written at {outPath}.")
-                { Code = "plugin_contract_violation" };
+                if (!File.Exists(outPath))
+                    throw new CliException(
+                        $"Exporter plugin '{plugin.Manifest.Name}' reported success but no output file was written at {outPath}.")
+                    { Code = "plugin_contract_violation" };
 
-            var msg = $"Exported: {file.FullName} → {outPath} (plugin: {plugin.Manifest.Name})";
-            if (json) Console.WriteLine(OutputFormatter.WrapEnvelopeText(msg));
-            else Console.WriteLine(msg);
-            return 0;
+                var residentNote = residentClosed
+                    ? " (resident closed to release lock; reopen with `officecli open` if needed)"
+                    : "";
+                var msg = $"Exported: {file.FullName} → {outPath} (plugin: {plugin.Manifest.Name}){residentNote}";
+                if (json) Console.WriteLine(OutputFormatter.WrapEnvelopeText(msg));
+                else Console.WriteLine(msg);
+                return 0;
+            }
+            finally
+            {
+                try { File.Delete(pluginSource); } catch { }
+            }
         }, json); });
 
         return cmd;
@@ -106,6 +131,25 @@ static partial class CommandBuilder
             return p;
 
         return null;
+    }
+
+    /// <summary>
+    /// Copy the source to a fresh tmp file so the exporter plugin can open it
+    /// exclusively, even when a resident/Word/another process already holds the
+    /// original. Uses FileShare.ReadWrite on the read side so the snapshot
+    /// succeeds even against an exclusive write lock; the produced tmp file is
+    /// the plugin's input. Caller is responsible for deleting it.
+    /// </summary>
+    private static string SnapshotForExport(string sourcePath)
+    {
+        var ext = Path.GetExtension(sourcePath);
+        var tmp = Path.Combine(Path.GetTempPath(),
+            $"officecli-export-{Guid.NewGuid():N}{ext}");
+        using var src = new FileStream(sourcePath, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var dst = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        src.CopyTo(dst);
+        return tmp;
     }
 
     private static (int exitCode, string stderr) RunExporter(string exe, string source, string target)
