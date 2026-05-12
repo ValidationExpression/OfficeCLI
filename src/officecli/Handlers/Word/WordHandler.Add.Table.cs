@@ -183,6 +183,8 @@ public partial class WordHandler
             "align", "alignment", "width", "indent", "cellspacing", "layout",
             "padding", "padding.top", "padding.bottom", "padding.left", "padding.right",
             "style", "shd", "shading", "direction", "dir", "bidi",
+            // CONSISTENCY(add-set-symmetry): mirror Set's tblPr-level cases.
+            "overlap",
         };
         foreach (var (tk, tv) in properties)
         {
@@ -369,6 +371,34 @@ public partial class WordHandler
                         tblProps.Shading = tShd;
                     }
                     break;
+                case "overlap":
+                {
+                    // CONSISTENCY(add-set-symmetry): mirror Set's overlap case
+                    // (Set.Element.cs:1752). CT_TblPr schema:
+                    // tblStyle → tblpPr → tblOverlap → ...
+                    tblProps.RemoveAllChildren<TableOverlap>();
+                    if (!tv.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var overlapEl = new TableOverlap
+                        {
+                            Val = tv.ToLowerInvariant() switch
+                            {
+                                "overlap" or "true" or "always" => TableOverlapValues.Overlap,
+                                "never" or "false" => TableOverlapValues.Never,
+                                _ => throw new ArgumentException($"Invalid overlap: '{tv}'. Valid: overlap, never, none.")
+                            }
+                        };
+                        var tppRef = tblProps.GetFirstChild<TablePositionProperties>();
+                        if (tppRef != null) tppRef.InsertAfterSelf(overlapEl);
+                        else
+                        {
+                            var styleRef = tblProps.GetFirstChild<TableStyle>();
+                            if (styleRef != null) styleRef.InsertAfterSelf(overlapEl);
+                            else tblProps.PrependChild(overlapEl);
+                        }
+                    }
+                    break;
+                }
                 case "direction" or "dir" or "bidi":
                     // Table-level bidi: emit <w:bidiVisual/> on tblPr in schema
                     // order. Mirrors paragraph/cell direction=rtl vocabulary.
@@ -546,6 +576,18 @@ public partial class WordHandler
         {
             newRowProps ??= newRow.AppendChild(new TableRowProperties());
             newRowProps.AppendChild(new TableHeader());
+        }
+        // CONSISTENCY(add-set-symmetry): mirror Set's cantsplit case
+        // (Set.Element.cs:1504). Row stays together across pages when true.
+        if (properties.TryGetValue("cantSplit", out var cantSplitVal)
+            || properties.TryGetValue("cantsplit", out cantSplitVal))
+        {
+            if (IsTruthy(cantSplitVal))
+            {
+                newRowProps ??= newRow.AppendChild(new TableRowProperties());
+                if (newRowProps.GetFirstChild<CantSplit>() == null)
+                    newRowProps.AppendChild(new CantSplit());
+            }
         }
 
         for (int c = 0; c < newCols; c++)
@@ -774,6 +816,30 @@ public partial class WordHandler
                     }
                 }
                 tcPrFill.Shading = shd;
+            }
+        }
+
+        // CONSISTENCY(add-set-symmetry): mirror Set's noWrap / hideMark cases
+        // (Set.Element.cs:1342 + TryCreateTypedChild path).
+        if (properties.TryGetValue("noWrap", out var noWrapVal)
+            || properties.TryGetValue("nowrap", out noWrapVal))
+        {
+            if (IsTruthy(noWrapVal))
+            {
+                var tcPr = newCell.GetFirstChild<TableCellProperties>()
+                    ?? newCell.PrependChild(new TableCellProperties());
+                if (tcPr.NoWrap == null) tcPr.NoWrap = new NoWrap();
+            }
+        }
+        if (properties.TryGetValue("hideMark", out var hideMarkVal)
+            || properties.TryGetValue("hidemark", out hideMarkVal))
+        {
+            if (IsTruthy(hideMarkVal))
+            {
+                var tcPr = newCell.GetFirstChild<TableCellProperties>()
+                    ?? newCell.PrependChild(new TableCellProperties());
+                if (tcPr.GetFirstChild<HideMark>() == null)
+                    tcPr.AppendChild(new HideMark());
             }
         }
 
