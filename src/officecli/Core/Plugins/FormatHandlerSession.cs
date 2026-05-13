@@ -44,7 +44,12 @@ internal sealed class FormatHandlerSession : IDisposable
     {
         _filePath = Path.GetFullPath(filePath);
         _plugin = plugin;
-        _pipeName = $"officecli-fmt-{Guid.NewGuid():N}";
+        // Keep this short: on Unix the .NET named-pipe API maps to a domain
+        // socket under $TMPDIR/CoreFxPipe_<name>, and the kernel caps the
+        // total path at 104 bytes on macOS. A 32-char Guid pushes it over.
+        // 12 hex chars = 48 bits of randomness — plenty for per-session
+        // pipe uniqueness, and the final path stays well under the cap.
+        _pipeName = $"oc-fh-{Guid.NewGuid().ToString("N").AsSpan(0, 12)}";
     }
 
     public void Start(int connectTimeoutMs = 15000)
