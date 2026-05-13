@@ -85,11 +85,13 @@ public static class DocumentHandlerFactory
     ///
     /// dump-reader: per docs/plugin-protocol.md §2.1, the plugin emits a batch
     /// of officecli commands describing the foreign source; main replays them
-    /// into a fresh .docx. The result is cached as a sibling file
-    /// <c>&lt;source-stem&gt;.docx</c> next to the source so subsequent
-    /// invocations skip the plugin entirely (regenerated when the source
-    /// mtime is newer than the sibling's, or when the sibling has been
-    /// deleted). All edits target the sibling .docx, not the original source.
+    /// into a fresh native file whose extension comes from the plugin's
+    /// manifest <c>target</c> (docx/xlsx/pptx). The result is cached as a
+    /// sibling file <c>&lt;source-stem&gt;.&lt;target&gt;</c> next to the
+    /// source so subsequent invocations skip the plugin entirely (regenerated
+    /// when the source mtime is newer than the sibling's, or when the sibling
+    /// has been deleted). All edits target the sibling file, not the original
+    /// source.
     ///
     /// format-handler: not yet wired; resolved plugins produce a clear
     /// "found but not yet wired" exception until the proxy lands.
@@ -99,7 +101,8 @@ public static class DocumentHandlerFactory
         var dumpReader = PluginRegistry.FindFor(PluginKind.DumpReader, ext);
         if (dumpReader is not null)
         {
-            var sibling = Path.ChangeExtension(filePath, ".docx");
+            var targetExt = dumpReader.Manifest.ResolveTargetExtension();
+            var sibling = Path.ChangeExtension(filePath, targetExt);
             var needRegen = !File.Exists(sibling)
                 || File.GetLastWriteTimeUtc(filePath) > File.GetLastWriteTimeUtc(sibling);
 
@@ -108,41 +111,42 @@ public static class DocumentHandlerFactory
                 var converted = DumpReaderInvoker.Run(filePath, ext);
 
                 // Some plugins (e.g. Word interop on .doc) inherently write a
-                // converted .docx in the source directory as a side effect of
-                // their conversion path. If the sibling now exists and is
-                // current, prefer it over the batch-replayed copy: it's the
-                // plugin's direct conversion, higher fidelity than going
-                // through batch round-trip serialization.
+                // converted native file in the source directory as a side
+                // effect of their conversion path. If the sibling now exists
+                // and is current, prefer it over the batch-replayed copy:
+                // it's the plugin's direct conversion, higher fidelity than
+                // going through batch round-trip serialization.
                 var siblingFresh = File.Exists(sibling)
                     && File.GetLastWriteTimeUtc(sibling) >= File.GetLastWriteTimeUtc(filePath);
 
                 if (siblingFresh)
                 {
-                    try { File.Delete(converted.ConvertedDocxPath); } catch { /* tmp will age out */ }
+                    try { File.Delete(converted.ConvertedPath); } catch { /* tmp will age out */ }
                 }
                 else
                 {
                     try
                     {
-                        var bytes = File.ReadAllBytes(converted.ConvertedDocxPath);
+                        var bytes = File.ReadAllBytes(converted.ConvertedPath);
                         File.WriteAllBytes(sibling, bytes);
-                        try { File.Delete(converted.ConvertedDocxPath); } catch { /* tmp will age out */ }
+                        try { File.Delete(converted.ConvertedPath); } catch { /* tmp will age out */ }
                     }
                     catch (Exception ex)
                     {
                         Console.Error.WriteLine(
                             $"[note] could not write sibling {Path.GetFileName(sibling)} ({ex.Message}); falling back to temp file (will reconvert next run)");
-                        return new WordHandler(converted.ConvertedDocxPath, editable);
+                        return OpenHandlerWithRetry(converted.ConvertedPath, targetExt, editable);
                     }
                 }
                 Console.Error.WriteLine(
                     $"[note] generated {Path.GetFileName(sibling)} from {Path.GetFileName(filePath)}; reusing on future runs (delete or rename it to force reconversion)");
             }
 
-            // The sibling .docx may be transiently locked right after a fresh
-            // plugin run (Word COM server lingering, Defender scan, OneDrive
-            // sync). Retry briefly before surfacing the lock to the user.
-            return OpenWordWithRetry(sibling, editable);
+            // The sibling file may be transiently locked right after a fresh
+            // plugin run (Word/Excel COM server lingering, Defender scan,
+            // OneDrive sync). Retry briefly before surfacing the lock to the
+            // user.
+            return OpenHandlerWithRetry(sibling, targetExt, editable);
         }
 
         var formatHandler = PluginRegistry.FindFor(PluginKind.FormatHandler, ext);
@@ -164,12 +168,12 @@ public static class DocumentHandlerFactory
         return null;
     }
 
-    private static WordHandler OpenWordWithRetry(string docxPath, bool editable)
+    private static IDocumentHandler OpenHandlerWithRetry(string path, string ext, bool editable)
     {
         Exception? last = null;
         for (int attempt = 0; attempt < 8; attempt++)
         {
-            try { return new WordHandler(docxPath, editable); }
+            try { return OpenHandler(path, ext, editable); }
             catch (IOException ex) { last = ex; Thread.Sleep(150 * (attempt + 1)); }
         }
         throw last!;

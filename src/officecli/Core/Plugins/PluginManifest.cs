@@ -67,6 +67,17 @@ public sealed class PluginManifest
     [JsonPropertyName("extensions")]
     public List<string> Extensions { get; set; } = new();
 
+    /// <summary>
+    /// Native format the plugin produces (dump-reader: the format the emitted
+    /// batch is replayed into; exporter: the source-side native format).
+    /// One of <c>"docx"</c>, <c>"xlsx"</c>, <c>"pptx"</c>. Optional — defaults
+    /// to <c>"docx"</c> for protocol-v1 plugins that pre-date this field.
+    /// Used by main to pick the sibling-cache extension, the linting schema,
+    /// and the handler that opens replay output.
+    /// </summary>
+    [JsonPropertyName("target")]
+    public string? Target { get; set; }
+
     [JsonPropertyName("description")]
     public string? Description { get; set; }
 
@@ -87,6 +98,31 @@ public sealed class PluginManifest
 
     [JsonPropertyName("vocabulary")]
     public PluginVocabulary? Vocabulary { get; set; }
+}
+
+public static class PluginManifestExtensions
+{
+    /// <summary>
+    /// Canonical target format name ("docx"/"xlsx"/"pptx"). Defaults to
+    /// "docx" for plugins that omit the field (protocol-v1 back-compat).
+    /// Throws if the manifest declares an unsupported target.
+    /// </summary>
+    public static string ResolveTargetFormat(this PluginManifest m)
+    {
+        var t = (m.Target ?? "docx").ToLowerInvariant();
+        return t switch
+        {
+            "docx" or "xlsx" or "pptx" => t,
+            _ => throw new InvalidOperationException(
+                $"Plugin '{m.Name}' declares unsupported target '{m.Target}'. Expected one of: docx, xlsx, pptx."),
+        };
+    }
+
+    /// <summary>
+    /// File extension (with leading dot) for the plugin's target format.
+    /// </summary>
+    public static string ResolveTargetExtension(this PluginManifest m) =>
+        "." + m.ResolveTargetFormat();
 }
 
 /// <summary>

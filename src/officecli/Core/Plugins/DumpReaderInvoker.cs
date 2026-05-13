@@ -12,15 +12,17 @@ namespace OfficeCli.Core.Plugins;
 /// Runs a dump-reader plugin per docs/plugin-protocol.md §5.1. The plugin reads
 /// a foreign source file (e.g. .doc) and emits a BatchItem[] JSON array on
 /// stdout describing the document as a sequence of officecli commands. Main
-/// creates a blank .docx scratch file, replays the batch against it, and
-/// returns the populated path. Callers open that path as a normal .docx.
+/// creates a blank native scratch file (extension chosen by the plugin's
+/// manifest <c>target</c> — docx/xlsx/pptx), replays the batch against it,
+/// and returns the populated path. Callers open that path as a normal native
+/// document.
 ///
-/// The conversion is one-shot: edits to the returned .docx are not propagated
+/// The conversion is one-shot: edits to the returned file are not propagated
 /// back to the source file.
 /// </summary>
 public static class DumpReaderInvoker
 {
-    public sealed record DumpResult(string ConvertedDocxPath, ResolvedPlugin Plugin);
+    public sealed record DumpResult(string ConvertedPath, ResolvedPlugin Plugin);
 
     /// <summary>
     /// Resolve a dump-reader plugin for <paramref name="sourceExt"/>, invoke it
@@ -66,14 +68,16 @@ public static class DumpReaderInvoker
             { Code = "plugin_contract_violation" };
         }
 
-        var tmpDocx = Path.Combine(Path.GetTempPath(),
-            $"officecli-dumpread-{Guid.NewGuid():N}.docx");
-        // minimal: true gives a bare-skeleton docx (no Normal style, no theme,
-        // no docDefaults). The plugin's batch is expected to define everything
-        // it references — round-trip dumps from `officecli dump` do exactly that.
-        BlankDocCreator.Create(tmpDocx, locale: null, minimal: true);
+        var targetExt = plugin.Manifest.ResolveTargetExtension();
+        var tmpOut = Path.Combine(Path.GetTempPath(),
+            $"officecli-dumpread-{Guid.NewGuid():N}{targetExt}");
+        // minimal: true gives a bare-skeleton native file (no default styles,
+        // theme, or docDefaults for docx; equivalent skeleton for xlsx/pptx).
+        // The plugin's batch is expected to define everything it references —
+        // round-trip dumps from `officecli dump` do exactly that.
+        BlankDocCreator.Create(tmpOut, locale: null, minimal: true);
 
-        using (var handler = DocumentHandlerFactory.Open(tmpDocx, editable: true))
+        using (var handler = DocumentHandlerFactory.Open(tmpOut, editable: true))
         {
             for (int i = 0; i < items.Count; i++)
             {
@@ -95,7 +99,7 @@ public static class DumpReaderInvoker
             }
         }
 
-        return new DumpResult(tmpDocx, plugin);
+        return new DumpResult(tmpOut, plugin);
     }
 
     private static (int exitCode, string stdout, string stderr) RunPlugin(string exe, string source)
