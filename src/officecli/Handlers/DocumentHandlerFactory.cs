@@ -145,14 +145,21 @@ public static class DocumentHandlerFactory
             return OpenWordWithRetry(sibling, editable);
         }
 
-        var formatHandler2 = PluginRegistry.FindFor(PluginKind.FormatHandler, ext);
-        if (formatHandler2 is not null)
-            throw new CliException(
-                $"Plugin '{formatHandler2.Manifest.Name}' is installed for {ext} but format-handler invocation is not yet wired up in this build.")
+        var formatHandler = PluginRegistry.FindFor(PluginKind.FormatHandler, ext);
+        if (formatHandler is not null)
+        {
+            var session = new FormatHandlerSession(filePath, formatHandler);
+            try
             {
-                Code = "plugin_not_wired",
-                Suggestion = "Plugin discovery works; runtime IPC integration is pending. Track in docs/plugin-protocol.md."
-            };
+                session.Start();
+                return new FormatHandlerProxy(session);
+            }
+            catch
+            {
+                session.Dispose();
+                throw;
+            }
+        }
 
         return null;
     }

@@ -277,8 +277,37 @@ codes follow §6.6.
 <plugin> open <file> --pipe <pipe-name>
 ```
 
-The plugin opens the file, connects to the pipe, and serves messages until it
-receives `close` (see §6.4).
+The plugin opens the file, connects to the pipe (`\\.\pipe\<name>` on
+Windows, the .NET cross-platform Unix-socket equivalent on Linux/macOS),
+and serves messages until it receives `close` (see §6.4). Each request
+gets exactly one reply before the next request is sent.
+
+Request envelope (main → plugin):
+
+```json
+{"protocol":1, "msg_type":"command", "command":"<verb>", "args":{...}}
+```
+
+Currently-proxied verbs (v0 read path):
+
+| `command` | `args` keys | `result` shape on `ok` |
+|---|---|---|
+| `view` | `mode` (`text`/`annotated`/`outline`/`stats`/`issues`), `start`/`end`/`max-lines`/`cols`/`type`/`limit`/`format` | string (or JSON object when `format=json`); for `mode=issues`, an array of issue objects |
+| `get` | `path`, `depth` | DocumentNode JSON object |
+| `query` | `selector` | array of DocumentNode |
+| `validate` | (none) | array of `{errorType,description,path,part}` |
+
+Reply envelopes (plugin → main):
+
+```json
+{"protocol":1, "msg_type":"ok", "result":<value>}
+{"protocol":1, "msg_type":"error", "error":{"code":"<code>","message":"...","detail":"..."}}
+```
+
+Mutation verbs (`set`, `add`, `remove`, `move`, `copy`, `raw-set`, `add-part`)
+are reserved but not yet wired through the proxy; plugins may stub them out
+or reply with `error` code `unsupported_command`. They will be added in a
+future minor release.
 
 ### 5.4 Universal options
 

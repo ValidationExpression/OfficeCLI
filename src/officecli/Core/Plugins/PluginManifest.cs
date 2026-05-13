@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 using System.Text.Json.Serialization;
+using OfficeCli.Core;
 
 namespace OfficeCli.Core.Plugins;
 
@@ -112,4 +113,10 @@ public sealed class PluginVocabulary
 [JsonSerializable(typeof(PluginManifest))]
 [JsonSerializable(typeof(PluginVocabulary))]
 [JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(DocumentNode))]
+[JsonSerializable(typeof(List<DocumentNode>))]
+[JsonSerializable(typeof(DocumentIssue))]
+[JsonSerializable(typeof(List<DocumentIssue>))]
+[JsonSerializable(typeof(ValidationError))]
+[JsonSerializable(typeof(List<ValidationError>))]
 internal partial class PluginJsonContext : JsonSerializerContext;
