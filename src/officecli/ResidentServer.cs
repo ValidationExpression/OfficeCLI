@@ -1065,6 +1065,18 @@ public class ResidentServer : IDisposable
                 var svg = pptSvgHandler.ViewAsSvg(slideNum);
                 Console.Write(svg);
             }
+            else if (_handler is OfficeCli.Core.Plugins.FormatHandlerProxy svgProxy)
+            {
+                int? svgPage = null;
+                if (!string.IsNullOrEmpty(pageFilter)
+                    && int.TryParse(pageFilter.Split(',')[0].Split('-')[0].Trim(), out var sp))
+                    svgPage = sp;
+                var svg = svgProxy.ViewAsSvg(svgPage);
+                if (svg is null)
+                    Console.Error.WriteLine("SVG preview is not supported by the format-handler plugin.");
+                else
+                    Console.Write(svg);
+            }
             else
             {
                 Console.Error.WriteLine("SVG preview is only supported for .pptx files.");

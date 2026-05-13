@@ -180,6 +180,25 @@ internal sealed class FormatHandlerProxy : IDocumentHandler
     // command with a mode key the plugin chooses how to render.
 
     /// <summary>
+    /// Request SVG preview from the plugin (`view mode=svg`). Returns null
+    /// if the plugin replies with <c>unsupported_command</c>.
+    /// </summary>
+    public string? ViewAsSvg(int? page = null)
+    {
+        try
+        {
+            var args = new JsonObject { ["mode"] = "svg" };
+            if (page.HasValue) args["page"] = page.Value;
+            var result = _session.Send("command", "view", args);
+            return result?.GetValue<string>();
+        }
+        catch (CliException ex) when (ex.Code == "unsupported_command")
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Request HTML preview from the plugin (`view mode=html`). Returns null
     /// if the plugin replies with <c>unsupported_command</c> — caller may then
     /// raise its own "unsupported_type" CliException.

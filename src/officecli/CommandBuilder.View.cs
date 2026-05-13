@@ -325,6 +325,35 @@ static partial class CommandBuilder
                         Console.Write(svg);
                     }
                 }
+                else if (handler is OfficeCli.Core.Plugins.FormatHandlerProxy svgProxy)
+                {
+                    int? svgPage = null;
+                    if (!string.IsNullOrEmpty(pageFilter)
+                        && int.TryParse(pageFilter.Split(',')[0].Split('-')[0].Trim(), out var sp))
+                        svgPage = sp;
+                    var svg = svgProxy.ViewAsSvg(svgPage);
+                    if (svg is null)
+                        throw new OfficeCli.Core.CliException(
+                            $"SVG preview is not supported by the format-handler plugin for {file.Extension}.")
+                        { Code = "unsupported_type" };
+                    if (browser)
+                    {
+                        var outPath = Path.Combine(Path.GetTempPath(),
+                            $"officecli_preview_{Path.GetFileNameWithoutExtension(file.Name)}_{DateTime.Now:HHmmss}_{Guid.NewGuid():N}.svg");
+                        File.WriteAllText(outPath, svg);
+                        Console.WriteLine(outPath);
+                        try
+                        {
+                            var psi = new System.Diagnostics.ProcessStartInfo(outPath) { UseShellExecute = true };
+                            System.Diagnostics.Process.Start(psi);
+                        }
+                        catch { /* silently ignore if viewer can't be opened */ }
+                    }
+                    else
+                    {
+                        Console.Write(svg);
+                    }
+                }
                 else
                 {
                     throw new OfficeCli.Core.CliException("SVG preview is only supported for .pptx files.")
