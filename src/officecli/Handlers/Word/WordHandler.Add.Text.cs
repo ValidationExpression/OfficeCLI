@@ -372,12 +372,26 @@ public partial class WordHandler
             var ind = pProps.Indentation ?? (pProps.Indentation = new Indentation());
             ind.HangingChars = ParseHelpers.SafeParseInt(addHC, "hangingChars");
         }
-        if ((properties.TryGetValue("keepnext", out var addKN) || properties.TryGetValue("keepNext", out addKN)) && IsTruthy(addKN))
-            pProps.KeepNext = new KeepNext();
-        if ((properties.TryGetValue("keeplines", out var addKL) || properties.TryGetValue("keeptogether", out addKL) || properties.TryGetValue("keepLines", out addKL) || properties.TryGetValue("keepTogether", out addKL)) && IsTruthy(addKL))
-            pProps.KeepLines = new KeepLines();
-        if ((properties.TryGetValue("pagebreakbefore", out var addPBB) || properties.TryGetValue("pageBreakBefore", out addPBB)) && IsTruthy(addPBB))
-            pProps.PageBreakBefore = new PageBreakBefore();
+        // keepNext / keepLines / pageBreakBefore are <w:onOff>-typed: the
+        // bare element means "true", and an explicit <w:keepNext w:val="0"/>
+        // means "false" (and OVERRIDES a true inherited from a paragraph
+        // style — common pattern in heading-style paragraphs that want to
+        // disable the style's default keep-with-next). Write both forms.
+        if (properties.TryGetValue("keepnext", out var addKN) || properties.TryGetValue("keepNext", out addKN))
+            pProps.KeepNext = IsTruthy(addKN)
+                ? new KeepNext()
+                : new KeepNext { Val = OnOffValue.FromBoolean(false) };
+        if (properties.TryGetValue("keeplines", out var addKL)
+            || properties.TryGetValue("keeptogether", out addKL)
+            || properties.TryGetValue("keepLines", out addKL)
+            || properties.TryGetValue("keepTogether", out addKL))
+            pProps.KeepLines = IsTruthy(addKL)
+                ? new KeepLines()
+                : new KeepLines { Val = OnOffValue.FromBoolean(false) };
+        if (properties.TryGetValue("pagebreakbefore", out var addPBB) || properties.TryGetValue("pageBreakBefore", out addPBB))
+            pProps.PageBreakBefore = IsTruthy(addPBB)
+                ? new PageBreakBefore()
+                : new PageBreakBefore { Val = OnOffValue.FromBoolean(false) };
         // fuzz-2: paragraph-context `break=newPage` alias → pageBreakBefore=true.
         // Mirrors Set-side handling in WordHandler.Set.cs (case "break").
         if (properties.TryGetValue("break", out var addBrk))
