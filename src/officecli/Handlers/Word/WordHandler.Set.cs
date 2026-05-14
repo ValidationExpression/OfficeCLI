@@ -679,6 +679,35 @@ public partial class WordHandler
                 indentH.Hanging = SpacingConverter.ParseWordSpacing(value).ToString();
                 indentH.FirstLine = null;
                 return true;
+            // CONSISTENCY(ind-char-units): CJK-convention character-unit
+            // indents (recomputed by Word when font size changes). Mirror
+            // AddStyle's char-unit handlers so dump→batch on Set paragraph
+            // preserves the source's firstLineChars / leftChars / rightChars
+            // / hangingChars attrs.
+            case "firstlinechars":
+            {
+                var indFlc = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                indFlc.FirstLineChars = ParseHelpers.SafeParseInt(value, "firstLineChars");
+                return true;
+            }
+            case "leftchars" or "startchars":
+            {
+                var indLc = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                indLc.LeftChars = ParseHelpers.SafeParseInt(value, "leftChars");
+                return true;
+            }
+            case "rightchars" or "endchars":
+            {
+                var indRc = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                indRc.RightChars = ParseHelpers.SafeParseInt(value, "rightChars");
+                return true;
+            }
+            case "hangingchars":
+            {
+                var indHc = pProps.Indentation ?? (pProps.Indentation = new Indentation());
+                indHc.HangingChars = ParseHelpers.SafeParseInt(value, "hangingChars");
+                return true;
+            }
             // Toggle props: always replace the element (don't `??=`) so an
             // existing `<w:foo w:val="false"/>` written by a previous Set or
             // by external tooling is correctly overridden when the new value

@@ -106,7 +106,12 @@ public partial class WordHandler
         {
             var parts = colsVal.Split(',');
             var count = (short)int.Parse(parts[0].Trim());
-            var cols = new Columns { ColumnCount = count, EqualWidth = true };
+            // CONSISTENCY(columns-no-equalWidth-default): Set.SectionLayout
+            // dropped the EqualWidth auto-stamp (round-trip preservation —
+            // sources whose <w:cols> omits w:equalWidth must replay without
+            // it). Mirror that on Add so `add section --prop columns=N`
+            // doesn't phantom-stamp columns.equalWidth=true.
+            var cols = new Columns { ColumnCount = count };
             if (parts.Length > 1)
                 cols.Space = ParseTwips(parts[1].Trim()).ToString();
             InsertSectPrChildInOrder(sectPr, cols);
