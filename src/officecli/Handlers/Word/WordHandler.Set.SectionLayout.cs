@@ -21,8 +21,13 @@ public partial class WordHandler
             case "columns.count":
             {
                 var cols = EnsureColumns();
-                cols.ColumnCount = (short)ParseHelpers.SafeParseInt(value, "columns.count");
-                if (cols.EqualWidth == null)
+                var n = (short)ParseHelpers.SafeParseInt(value, "columns.count");
+                cols.ColumnCount = n;
+                // Auto-stamp equalWidth=true only for multi-column layouts —
+                // single column has no visible difference, and the auto-stamp
+                // poisoned dump round-trip for sources whose single-column
+                // sectPr had no <w:cols w:equalWidth=…> attribute.
+                if (n > 1 && cols.EqualWidth == null)
                     cols.EqualWidth = true;
                 return true;
             }
@@ -233,7 +238,12 @@ public partial class WordHandler
                 if (!short.TryParse(colParts[0], out var colCount))
                     throw new ArgumentException($"Invalid 'columns' value: '{value}'. Expected an integer or integer,space (e.g. '3' or '3,720').");
                 eqCols.ColumnCount = (DocumentFormat.OpenXml.Int16Value)colCount;
-                eqCols.EqualWidth = true;
+                // Single column → no visible difference whether equalWidth
+                // is set; the auto-stamp leaked a phantom `columns.equalWidth=true`
+                // key on dump round-trip for sources whose <w:cols> had no
+                // equalWidth attr (complex-textbox-test.docx).
+                if (colCount > 1)
+                    eqCols.EqualWidth = true;
                 if (colParts.Length > 1)
                     eqCols.Space = colParts[1];
                 else
