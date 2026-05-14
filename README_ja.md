@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <video src="https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/assets/ppt-process.mp4" aria-label="AionUi で OfficeCLI を使った PPT 作成プロセス" width="100%" autoplay loop muted playsinline></video>
+  <img src="assets/ppt-process.webp" alt="AionUi で OfficeCLI を使った PPT 作成プロセス" width="100%">
 </p>
 
 <p align="center"><em><a href="https://github.com/iOfficeAI/AionUi">AionUi</a> で OfficeCLI を使った PPT 作成プロセス</em></p>
