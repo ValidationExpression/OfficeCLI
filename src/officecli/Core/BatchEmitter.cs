@@ -257,6 +257,11 @@ public static class BatchEmitter
             {
                 RenameAttr(ind, "left", "start", wNs);
                 RenameAttr(ind, "right", "end", wNs);
+                // BIDI-aware character-count variants also drift through SDK
+                // normalisation. proof_fixed family: <w:ind … w:leftChars="0" …>
+                // → SDK rewrites as <w:ind … w:startChars="0" …>.
+                RenameAttr(ind, "leftChars", "startChars", wNs);
+                RenameAttr(ind, "rightChars", "endChars", wNs);
                 SortIndAttrs(ind);
             }
             // Stabilise root attribute order: SDK serialises xmlns attrs in
