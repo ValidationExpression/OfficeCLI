@@ -1799,7 +1799,13 @@ public partial class WordHandler
                             numIdLevelOffset.Clear();
                         }
                     }
-                    // Apply stored level offset for this numId
+                    // Preserve the paragraph's OOXML ilvl (the index into
+                    // <w:abstractNum><w:lvl>) for level-rPr / level-pPr lookups
+                    // that must read the level definition the doc actually
+                    // references. The HTML rendering may stack this list a
+                    // step deeper for visual nesting across numIds; that
+                    // structural depth uses the bumped value.
+                    var ilvlOoxml = ilvl;
                     if (numIdLevelOffset.TryGetValue(numId, out var offset))
                         ilvl += offset;
 
@@ -1935,7 +1941,7 @@ public partial class WordHandler
                     // BuildListMarkerCss so this <li> picks up the abstractNum
                     // level rPr (color/font/size/bold/italic) for ul, plus
                     // a custom list-style-type string when applicable.
-                    sb.Append($" class=\"marker-{numId}-{ilvl}\"");
+                    sb.Append($" class=\"marker-{numId}-{ilvlOoxml}\"");
                     var paraStyle = GetParagraphInlineCss(para, isListItem: true);
                     // ul markers render via ::marker pseudo, which sits outside
                     // the line box and can't inflate it. ol markers render via
@@ -1943,7 +1949,7 @@ public partial class WordHandler
                     // height — the precise line-height there is enough.
                     if (tag == "ul")
                     {
-                        var liLh = GetListItemLineHeightOverride(numId, ilvl, para);
+                        var liLh = GetListItemLineHeightOverride(numId, ilvlOoxml, para);
                         if (liLh.HasValue)
                         {
                             var rx = new System.Text.RegularExpressions.Regex(@"line-height:[^;]+");
@@ -1982,7 +1988,7 @@ public partial class WordHandler
                         // for ul ::marker. Word lets per-level rPr restyle markers
                         // independent of the body run; mirroring that here keeps
                         // sections like "red bold 1." parallel between ol/ul.
-                        var inlineMarkerCss = GetMarkerInlineCss(numId, ilvl, para);
+                        var inlineMarkerCss = GetMarkerInlineCss(numId, ilvlOoxml, para);
                         var markerStyle = $"display:inline-block;min-width:{markerWidth};padding-right:{markerPadding};text-align:{align}";
                         if (!string.IsNullOrEmpty(inlineMarkerCss))
                             markerStyle = inlineMarkerCss + ";" + markerStyle;
