@@ -1504,18 +1504,36 @@ public partial class WordHandler
             if (hlColor != null) parts.Add($"background-color:{hlColor}");
         }
 
-        // Superscript / Subscript — always shrink to match Word's behavior.
-        // Word auto-sizes sub/sup relative to the surrounding run, even when
-        // the run has an explicit size. Use font-size:smaller (browser spec
-        // default for <sub>/<sup>) so the shrinkage compounds with any
-        // explicit size we already emitted for this run.
+        // Superscript / Subscript per OOXML §17.3.2.42: the surrounding
+        // line-box keeps the base-font height; only the affected run's glyph
+        // is repositioned. Browser default vertical-align:super/sub raises
+        // the inline box which participates in line-height aggregation and
+        // expands the parent line; position:relative shifts the visual glyph
+        // without affecting line geometry. Reduced font size and baseline
+        // offset come from the run's own font (OS/2 ySub/SuperscriptYSize
+        // and ySub/SuperscriptYOffset); a font-agnostic fallback applies
+        // when those fields are unreadable.
         var vertAlign = rProps.VerticalTextAlignment?.Val;
         if (vertAlign != null)
         {
+            var ssFont = font ?? (para != null ? ResolveParaFontForLineHeight(para) : null);
+            var ss = ssFont != null
+                ? FontMetricsReader.GetSuperSubMetrics(ssFont)
+                : default;
             if (vertAlign.InnerText == "superscript")
-                parts.Add("vertical-align:super;font-size:smaller");
+            {
+                if (!ss.IsEmpty && ss.SuperSizeEm > 0 && ss.SuperOffsetEm > 0)
+                    parts.Add($"vertical-align:baseline;position:relative;top:-{ss.SuperOffsetEm:0.###}em;font-size:{ss.SuperSizeEm * 100:0.#}%");
+                else
+                    parts.Add("vertical-align:baseline;position:relative;top:-0.35em;font-size:smaller");
+            }
             else if (vertAlign.InnerText == "subscript")
-                parts.Add("vertical-align:sub;font-size:smaller");
+            {
+                if (!ss.IsEmpty && ss.SubSizeEm > 0 && ss.SubOffsetEm > 0)
+                    parts.Add($"vertical-align:baseline;position:relative;top:{ss.SubOffsetEm:0.###}em;font-size:{ss.SubSizeEm * 100:0.#}%");
+                else
+                    parts.Add("vertical-align:baseline;position:relative;top:0.15em;font-size:smaller");
+            }
         }
 
         // SmallCaps / AllCaps
@@ -2135,6 +2153,49 @@ public partial class WordHandler
     /// with the highest ratio. CSS unitless line-height inheritance then
     /// scales it per-span by each run's own font-size.
     /// </remarks>
+    /// <summary>
+    /// Inline style for a footnote/endnote-reference &lt;sup&gt;. Resolves the
+    /// run's own font first (when its rFonts pin one) and falls back to the
+    /// paragraph's principal font; reads the font's OS/2 sub/superscript
+    /// fields to size and position the reference glyph the way the run's
+    /// own font would. See [Css.cs vertAlign emit](WordHandler.HtmlPreview.Css.cs)
+    /// for the symmetrical inline-run path; the font-agnostic fallback is
+    /// the same CSS browsers use for &lt;sup&gt; when OS/2 data isn't queried.
+    /// </summary>
+    private string ResolveNoteRefSupStyle(Run run, Paragraph para)
+    {
+        var rProps = run.RunProperties;
+        var fonts = rProps?.RunFonts;
+        string? font = fonts?.Ascii?.Value
+            ?? ResolveThemeFont(fonts?.AsciiTheme?.InnerText)
+            ?? fonts?.HighAnsi?.Value
+            ?? ResolveThemeFont(fonts?.HighAnsiTheme?.InnerText)
+            ?? ResolveParaFontForLineHeight(para);
+        return BuildSupStyleFromFont(font);
+    }
+
+    /// <summary>
+    /// Inline style for the footnote / endnote list-marker &lt;sup&gt; emitted
+    /// inside the page-bottom notes area. The note text typically renders in
+    /// the FootnoteText / EndnoteText style font; falls back to the document
+    /// default when that style omits an explicit typeface.
+    /// </summary>
+    private string ResolveNoteListSupStyle(string styleId)
+    {
+        var font = ResolveStyleFontName(styleId) ?? ReadDocDefaults().Font;
+        return BuildSupStyleFromFont(font);
+    }
+
+    private static string BuildSupStyleFromFont(string? font)
+    {
+        var ss = !string.IsNullOrEmpty(font)
+            ? FontMetricsReader.GetSuperSubMetrics(font)
+            : default;
+        if (!ss.IsEmpty && ss.SuperSizeEm > 0 && ss.SuperOffsetEm > 0)
+            return $"vertical-align:baseline;position:relative;top:-{ss.SuperOffsetEm:0.###}em;font-size:{ss.SuperSizeEm * 100:0.#}%;text-decoration:none";
+        return "vertical-align:baseline;position:relative;top:-0.35em;font-size:smaller;text-decoration:none";
+    }
+
     private string ResolveParaFontForLineHeight(Paragraph para)
     {
         bool paraHasCjk = para.Elements<Run>()
@@ -2240,6 +2301,26 @@ public partial class WordHandler
             var sz = style.StyleRunProperties?.FontSize?.Val?.Value;
             if (sz != null && int.TryParse(sz, out var halfPts))
                 return $"{halfPts / 2.0:0.##}pt";
+            current = style.BasedOn?.Val?.Value;
+        }
+        return null;
+    }
+
+    private string? ResolveStyleFontName(string styleId)
+    {
+        var visited = new HashSet<string>();
+        var current = styleId;
+        while (current != null && visited.Add(current))
+        {
+            var style = _doc.MainDocumentPart?.StyleDefinitionsPart?.Styles
+                ?.Elements<Style>().FirstOrDefault(s => s.StyleId?.Value == current);
+            if (style == null) break;
+            var rf = style.StyleRunProperties?.RunFonts;
+            var name = rf?.Ascii?.Value
+                ?? ResolveThemeFont(rf?.AsciiTheme?.InnerText)
+                ?? rf?.HighAnsi?.Value
+                ?? ResolveThemeFont(rf?.HighAnsiTheme?.InnerText);
+            if (!string.IsNullOrEmpty(name)) return name;
             current = style.BasedOn?.Val?.Value;
         }
         return null;
