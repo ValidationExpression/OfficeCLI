@@ -1896,7 +1896,30 @@ public partial class WordHandler
 
                     while (listStack.Count < ilvl + 1)
                     {
-                        sb.AppendLine($"<{tag}{indentStyle}>");
+                        // Nested-deeper open: the previous list item (parent) is
+                        // about to host this <ol>/<ul> as its child, so the
+                        // parent <li>'s margin-bottom applies AFTER the nested
+                        // list ends, not between the parent text and the first
+                        // nested item. OOXML §17.3.1.4 spaceAfter applies per
+                        // paragraph regardless of list nesting; promote the
+                        // parent's after-spacing to the nested list's margin-top
+                        // so consecutive level transitions get the same vertical
+                        // gap as same-level siblings.
+                        var nestedStyle = indentStyle;
+                        if (listStack.Count > 0)
+                        {
+                            var parentPara = para.PreviousSibling<Paragraph>();
+                            if (parentPara != null)
+                            {
+                                var parentAfterPt = ResolveParaAfterSpacingPt(parentPara);
+                                if (parentAfterPt > 0)
+                                {
+                                    var styleAttr = nestedStyle.TrimEnd('"');
+                                    nestedStyle = styleAttr + $";margin-top:{parentAfterPt:0.##}pt\"";
+                                }
+                            }
+                        }
+                        sb.AppendLine($"<{tag}{nestedStyle}>");
                         listStack.Push(tag);
                     }
                     // If same level but different list type, swap
